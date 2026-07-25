@@ -8,7 +8,7 @@ __whetuu_failed_at=""
 # Record a start time before each interactive command. Skip completion and the
 # precmd hook itself so they are not measured.
 __whetuu_preexec() {
-    [[ -n "$COMP_LINE" ]] && return
+    [[ -n "${COMP_LINE:-}" ]] && return
     [[ "$BASH_COMMAND" == "__whetuu_precmd" ]] && return
     __whetuu_start="${EPOCHREALTIME/./}"
 }
