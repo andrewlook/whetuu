@@ -7,7 +7,8 @@
 #
 # Environment:
 #   WHETUU_INSTALL_DIR   where to put the binary
-#                        (default: $HOME/.local/bin)
+#                        (default: an existing user install on PATH, then
+#                        $HOME/.local/bin)
 
 set -euo pipefail
 
@@ -36,6 +37,7 @@ need install
 need mktemp
 need mv
 need sed
+need dirname
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
 cd "$root"
@@ -68,13 +70,44 @@ if [[ -z $zig_bin ]]; then
     die "Zig $required_zig is required, found $found. Put it on PATH or run: mise install zig@$required_zig"
 fi
 
-if [[ -n ${WHETUU_INSTALL_DIR:-} ]]; then
-    install_dir=$WHETUU_INSTALL_DIR
-elif [[ -n ${HOME:-} ]]; then
-    install_dir=$HOME/.local/bin
-else
-    die "HOME is unset. Set WHETUU_INSTALL_DIR to choose an install directory."
-fi
+choose_install_dir() {
+    if [[ -n ${WHETUU_INSTALL_DIR:-} ]]; then
+        install_dir=$WHETUU_INSTALL_DIR
+        return
+    fi
+    [[ -n ${HOME:-} ]] ||
+        die "HOME is unset. Set WHETUU_INSTALL_DIR to choose an install directory."
+
+    local existing
+    existing=$(type -P whetuu 2>/dev/null || true)
+    if [[ -z $existing ]]; then
+        install_dir=$HOME/.local/bin
+        return
+    fi
+
+    local existing_dir existing_path home_dir
+    existing_dir=$(cd -P "$(dirname "$existing")" 2>/dev/null && pwd) ||
+        die "could not resolve the existing whetuu at $existing"
+    existing_path=$existing_dir/whetuu
+    home_dir=$(cd -P "$HOME" 2>/dev/null && pwd) ||
+        die "could not resolve HOME at $HOME"
+
+    [[ ! -L $existing_path ]] ||
+        die "found a symlink at $existing_path. Set WHETUU_INSTALL_DIR to replace it explicitly."
+    [[ -f $existing_path ]] ||
+        die "found whetuu at $existing_path, but it is not a regular file. Set WHETUU_INSTALL_DIR to choose a directory."
+    case $existing_path in
+        "$home_dir"/*) ;;
+        *) die "found whetuu outside HOME at $existing_path. Set WHETUU_INSTALL_DIR to replace it explicitly." ;;
+    esac
+    [[ -w $existing_path && -w $existing_dir ]] ||
+        die "found whetuu at $existing_path, but it is not writable. Set WHETUU_INSTALL_DIR to choose a directory."
+
+    install_dir=$existing_dir
+    say "found existing installation at $existing_path"
+}
+
+choose_install_dir
 
 say "building release binary with Zig $required_zig"
 "$zig_bin" build --release=fast

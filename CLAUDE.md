@@ -141,8 +141,8 @@ by someone deciding whether to use whetuu, so it has to be plain.
 - `zig build` — compile
 - `zig build --release=fast` — optimized build installed to `zig-out/bin/whetuu`,
   for trying a change locally. Run after every change (see above)
-- `tools/install.sh` — build the optimized binary and install it to
-  `~/.local/bin`, or to `$WHETUU_INSTALL_DIR` when set
+- `tools/install.sh` — build the optimized binary and replace a safe user copy
+  on `PATH`, fall back to `~/.local/bin`, or use `$WHETUU_INSTALL_DIR` when set
 - `zig build check` — type-check without producing an artifact
 - `zig build run -- <args>` — compile and run (e.g. `-- render --shell fish --status 0`)
 - `zig build release` — cross-compile + package a tarball per target into

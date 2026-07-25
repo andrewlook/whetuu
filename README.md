@@ -58,7 +58,7 @@ Left to right, each shown only when relevant:
 | `language`    | Logo and toolchain version in the brand color, for 39 languages and tools. Detected from a project manifest (`Cargo.toml`, `mix.exs`, …), a source file extension (`*.odin`, `*.rkt`, …), or an infra marker (`flake.nix`, `Dockerfile`, `*.tf` for Terraform and OpenTofu) |
 | `cmd_duration`| Timer glyph and `<time>` when the last command ran for 2 s or more          |
 | `character`   | A star, purple by default, or in the language brand color. Turns red after a failed command |
-| `shell`       | A dim `ᶠ`, `ᶻ` or `ᵇ` suffix on the character. Disabled by default          |
+| `shell`       | A `ᶠ`, `ᶻ` or `ᵇ` suffix in the character's color. Disabled by default       |
 
 ## Configuration
 
@@ -81,9 +81,9 @@ disable it. Disabling `git` or `language` also skips its file scan and
 subprocess. Disabling `language` leaves an enabled character purple because no
 project language is detected.
 
-The `shell` module adds a dim modifier letter directly after the character:
-`ᶠ` for fish, `ᶻ` for zsh and `ᵇ` for bash. It only appears when `character` is
-also enabled.
+The `shell` module adds a modifier letter directly after the character: `ᶠ` for
+fish, `ᶻ` for zsh and `ᵇ` for bash. It uses the character's purple, language or
+failure color. It only appears when `character` is also enabled.
 
 whetuu never creates or rewrites this file. A bad table, module name or value
 stops the render and reports the line to fix. Run `whetuu paths` to see the
@@ -280,9 +280,11 @@ tools/install.sh
 ```
 
 The script uses the exact Zig version on `PATH`, or an installed copy from
-`mise`, then builds a ReleaseFast binary and installs it to `~/.local/bin`.
-It stops with the exact `mise install` command when that compiler is missing.
-Choose another directory the same way as the release installer:
+`mise`, then builds a ReleaseFast binary. When the first `whetuu` on `PATH` is a
+writable regular file under `$HOME`, the script replaces that copy. When none
+is on `PATH`, it installs to `~/.local/bin`. It stops instead of overwriting a
+symlink, a system installation or a file it cannot write. Choose another
+directory explicitly to override that check:
 
 ```sh
 WHETUU_INSTALL_DIR="$HOME/bin" tools/install.sh

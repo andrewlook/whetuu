@@ -63,7 +63,7 @@ pub fn render(io: Io, arena: Allocator, env: *const Env, modules: Modules, w: *W
         const ch = character.choose(lang_result.lang, env.exit_status);
         try style.write(w, env.shell, ch.style, ch.text);
         if (modules.shell) {
-            const shell = shell_indicator.choose(env.shell);
+            const shell = shell_indicator.choose(env.shell, ch.style);
             try style.write(w, env.shell, shell.style, shell.text);
         }
     }
