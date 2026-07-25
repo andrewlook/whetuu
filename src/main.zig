@@ -298,6 +298,7 @@ test {
     _ = @import("module_directory.zig");
     _ = @import("module_git.zig");
     _ = @import("module_language.zig");
+    _ = @import("module_shell.zig");
     _ = @import("module_user_host.zig");
     _ = @import("render.zig");
     _ = @import("style.zig");

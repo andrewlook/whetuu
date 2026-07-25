@@ -16,6 +16,7 @@ const cmd_duration = @import("module_cmd_duration.zig");
 const directory = @import("module_directory.zig");
 const git = @import("module_git.zig");
 const language = @import("module_language.zig");
+const shell_indicator = @import("module_shell.zig");
 const style = @import("style.zig");
 const user_host = @import("module_user_host.zig");
 
@@ -61,6 +62,10 @@ pub fn render(io: Io, arena: Allocator, env: *const Env, modules: Modules, w: *W
     if (modules.character) {
         const ch = character.choose(lang_result.lang, env.exit_status);
         try style.write(w, env.shell, ch.style, ch.text);
+        if (modules.shell) {
+            const shell = shell_indicator.choose(env.shell);
+            try style.write(w, env.shell, shell.style, shell.text);
+        }
     }
     try w.writeByte(' ');
 }
@@ -106,7 +111,7 @@ test "render emits the directory, a newline, then the trailing character" {
     try std.testing.expect(std.mem.endsWith(u8, out, " "));
 }
 
-test "disabled modules do not render and the cursor keeps a prompt space" {
+test "shell indicator does not render without the character" {
     var threaded: Io.Threaded = .init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
@@ -129,6 +134,7 @@ test "disabled modules do not render and the cursor keeps a prompt space" {
         .language = false,
         .cmd_duration = false,
         .character = false,
+        .shell = true,
     };
 
     var buf: [4096]u8 = undefined;
@@ -168,4 +174,39 @@ test "character can be disabled without joining the cursor to the segment line" 
     try std.testing.expect(std.mem.indexOfScalar(u8, out, '\n') != null);
     try std.testing.expect(std.mem.indexOf(u8, out, style.icon.star) == null);
     try std.testing.expect(std.mem.endsWith(u8, out, "\n "));
+}
+
+test "shell indicator follows the character when enabled" {
+    var threaded: Io.Threaded = .init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const env: Env = .{
+        .shell = .fish,
+        .cwd = "/",
+        .home = "/nonexistent-home",
+        .width = 80,
+        .duration_ms = 0,
+        .exit_status = 0,
+    };
+    const modules: Modules = .{
+        .user_host = false,
+        .directory = false,
+        .git = false,
+        .language = false,
+        .cmd_duration = false,
+        .shell = true,
+    };
+
+    var buf: [4096]u8 = undefined;
+    var w: Writer = .fixed(&buf);
+    try render(io, arena.allocator(), &env, modules, &w);
+    const out = w.buffered();
+    const character_at = std.mem.indexOf(u8, out, style.icon.star).?;
+    const shell_at = std.mem.indexOf(u8, out, "ᶠ").?;
+    try std.testing.expect(character_at < shell_at);
+    try std.testing.expect(std.mem.endsWith(u8, out, " "));
 }

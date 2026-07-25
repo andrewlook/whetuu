@@ -27,7 +27,7 @@ it falls on the second syllable. The ASCII name doubles the `u` to write that
 same long vowel.
 
 whetuu needs no configuration. One compiled binary renders the full curated
-status line by default. You can disable individual modules with one small TOML
+status line by default. You can choose individual modules with one small TOML
 file. Every enabled module that reads the disk runs at the same time via
 `std.Io`, so a render costs about what its slowest probe costs. See
 [Configuration](#configuration) and [Performance](#performance).
@@ -58,11 +58,12 @@ Left to right, each shown only when relevant:
 | `language`    | Logo and toolchain version in the brand color, for 39 languages and tools. Detected from a project manifest (`Cargo.toml`, `mix.exs`, …), a source file extension (`*.odin`, `*.rkt`, …), or an infra marker (`flake.nix`, `Dockerfile`, `*.tf` for Terraform and OpenTofu) |
 | `cmd_duration`| Timer glyph and `<time>` when the last command ran for 2 s or more          |
 | `character`   | A star, purple by default, or in the language brand color. Turns red after a failed command |
+| `shell`       | A dim `ᶠ`, `ᶻ` or `ᵇ` suffix on the character. Disabled by default          |
 
 ## Configuration
 
-Every module is enabled when there is no config file. To hide modules, create
-`~/.config/whetuu/whetuu.toml` and set their names to `false`:
+The existing status line modules are enabled when there is no config file. The
+shell suffix is opt in. Create `~/.config/whetuu/whetuu.toml` to choose modules:
 
 ```toml
 [modules]
@@ -72,12 +73,17 @@ git = true
 language = false
 cmd_duration = true
 character = true
+shell = true
 ```
 
 Every key is optional. Set it to `true` to enable the module and `false` to
 disable it. Disabling `git` or `language` also skips its file scan and
 subprocess. Disabling `language` leaves an enabled character purple because no
 project language is detected.
+
+The `shell` module adds a dim modifier letter directly after the character:
+`ᶠ` for fish, `ᶻ` for zsh and `ᵇ` for bash. It only appears when `character` is
+also enabled.
 
 whetuu never creates or rewrites this file. A bad table, module name or value
 stops the render and reports the line to fix. Run `whetuu paths` to see the
@@ -150,7 +156,7 @@ whetuu reads your repository and prints a line. Here is what that involves.
   `~/.local/bin` is not already on your `PATH`. Set `WHETUU_NO_MODIFY=1` and it
   prints them instead.
 - **The config only accepts module switches.** Its one `[modules]` table takes
-  six boolean values. It cannot contain commands, paths or arguments. whetuu
+  seven boolean values. It cannot contain commands, paths or arguments. whetuu
   reads it and never writes it. Running, whetuu writes two other files. One is
   the history store. The other is a version cache at
   `~/.cache/whetuu/versions`, or under `$XDG_CACHE_HOME` when that is set. The

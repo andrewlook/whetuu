@@ -5,7 +5,7 @@ An opinionated async status line and history picker with no required setup
 The binary is installed as the ASCII command `whetuu` (whetū is Māori for "star").
 
 The status line format is hardcoded. An optional TOML file at
-`~/.config/whetuu/whetuu.toml` enables or disables its six modules. A single
+`~/.config/whetuu/whetuu.toml` enables or disables its seven modules. A single
 compiled binary renders the line by running every enabled I/O module concurrently
 via `std.Io` (`Io.async` → `Future`, backed by `Io.Threaded`).
 

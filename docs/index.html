@@ -467,7 +467,7 @@ footer p { margin: 0 0 0.4rem; }
   <h1 class="wordmark"><span class="mark" aria-hidden="true">󰦥</span>whetū</h1>
   <p class="say">/fɛˈtuː/ &nbsp;·&nbsp; feh-TOO &nbsp;·&nbsp; Māori for “star”</p>
   <p class="lede">An opinionated, zero-config status line and history picker for fish, bash and zsh, written in Zig.</p>
-  <p class="sub">One compiled binary renders the full curated status line by default. A small TOML file can disable any module. There is nothing to theme, and it renders in about two milliseconds.</p>
+  <p class="sub">One compiled binary renders the full curated status line by default. A small TOML file can choose its modules. There is nothing to theme, and it renders in about two milliseconds.</p>
   <p class="sub">It also puts your history on the up arrow. One binary does both, so the picker knows where you are. It opens on what you ran in this directory, and Ctrl+G switches to all of it. Failed commands are never stored, so you do not scroll past your own typos. Your own shell history stays exactly where it is.</p>
 
   <div class="term">
@@ -538,16 +538,18 @@ footer p { margin: 0 0 0.4rem; }
     <div class="mod"><dt>language</dt><dd>Logo and toolchain version in the brand colour, for <b>39 languages and tools</b>. Detected from a project manifest, a source file extension, or an infra marker.</dd></div>
     <div class="mod"><dt>cmd_duration</dt><dd>Timer glyph and elapsed time, when the last command ran for two seconds or more.</dd></div>
     <div class="mod"><dt>character</dt><dd>A star, purple by default or in the language brand colour. Turns red after a failed command.</dd></div>
+    <div class="mod"><dt>shell</dt><dd>An optional dim <b>ᶠ</b>, <b>ᶻ</b> or <b>ᵇ</b> suffix on the character for fish, zsh or bash.</dd></div>
   </dl>
   <h3>Choose the modules</h3>
-  <p>Every module is enabled when there is no config file. Create <code>~/.config/whetuu/whetuu.toml</code> and set any module to <code>false</code> to disable it. Omitted keys stay enabled.</p>
+  <p>The existing status line modules are enabled when there is no config file. The shell suffix is opt in. Create <code>~/.config/whetuu/whetuu.toml</code> to choose modules.</p>
   <pre>[modules]
 user_host = true
 directory = true
 git = true
 language = false
 cmd_duration = true
-character = true</pre>
+character = true
+shell = true</pre>
   <p class="note">whetuu never creates or rewrites this file. Disabling <b>git</b> or <b>language</b> also skips its file scan and subprocess. A bad setting stops the render and reports the line to fix.</p>
 </section>
 <section class="wrap" id="picker">
@@ -627,7 +629,7 @@ character = true</pre>
     <div class="mod"><dt>Skip a command</dt><dd>Start a command with a space and it is never recorded. Use it for the ones carrying a token. Only successful commands are stored at all.</dd></div>
     <div class="mod"><dt>No shell, ever</dt><dd>When their modules are enabled, whetuu can run two subprocesses: <b>git</b> and the toolchain version probe. Both get a fixed list of arguments rather than a command line, so nothing you type is ever interpreted as a command. State like a rebase in progress is read straight out of <b>.git</b> with no subprocess at all.</dd></div>
     <div class="mod"><dt>Escapes defanged</dt><dd>Every control byte in a command, a branch name or a directory becomes a <b>?</b> before it reaches your terminal. A repository you just cloned cannot repaint your screen or move your cursor through whetuu.</dd></div>
-    <div class="mod"><dt>Boolean config only</dt><dd>The config accepts six module switches under one <b>[modules]</b> table. It cannot contain commands, paths or arguments. whetuu reads it and never writes it.</dd></div>
+    <div class="mod"><dt>Boolean config only</dt><dd>The config accepts seven module switches under one <b>[modules]</b> table. It cannot contain commands, paths or arguments. whetuu reads it and never writes it.</dd></div>
     <div class="mod"><dt>One caveat</dt><dd>When enabled, the language module picks which toolchain to probe from the files in the current directory, so entering an untrusted repository can make whetuu run something like <b>node --version</b>. It runs whatever your <b>PATH</b> resolves, never a binary from the repository. Set <b>language = false</b> to skip the scan and probe.</dd></div>
     <div class="mod"><dt>Checkable downloads</dt><dd>The Linux builds are static musl with no runtime dependencies, and every release ships a <b>SHA256SUMS</b> file. The source is <a href="https://github.com/yamafaktory/whetuu">on GitHub</a> and builds from it with one command.</dd></div>
   </dl>

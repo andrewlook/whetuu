@@ -1,14 +1,14 @@
 //! Optional module configuration read from `~/.config/whetuu/whetuu.toml`.
-//! A missing file keeps every module enabled, so installing whetuu still needs
-//! no setup. The accepted TOML schema is deliberately small: one `[modules]`
-//! table whose known keys have boolean values.
+//! A missing file preserves the original status line, with its six modules on
+//! and the optional shell suffix off. The accepted TOML schema is deliberately
+//! small: one `[modules]` table whose known keys have boolean values.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Dir = std.Io.Dir;
 const Io = std.Io;
 
-/// Upper bound for the configuration file. Six boolean settings should stay
+/// Upper bound for the configuration file. Seven boolean settings should stay
 /// tiny, and a bound keeps an accidental large file off the render path.
 const read_limit: Io.Limit = .limited(64 * 1024);
 
@@ -21,6 +21,7 @@ pub const Modules = struct {
     language: bool = true,
     cmd_duration: bool = true,
     character: bool = true,
+    shell: bool = false,
 };
 
 const Module = enum(u3) {
@@ -30,6 +31,7 @@ const Module = enum(u3) {
     language,
     cmd_duration,
     character,
+    shell,
 };
 
 /// Location of a parse error. Zero means the file could not be read before a
@@ -135,6 +137,7 @@ fn parse(text: []const u8, diagnostic: *Diagnostic) ParseError!Modules {
             .language => modules.language = enabled,
             .cmd_duration => modules.cmd_duration = enabled,
             .character => modules.character = enabled,
+            .shell => modules.shell = enabled,
         }
     }
 
@@ -157,7 +160,7 @@ test "path is under the user's config directory" {
     try std.testing.expect((try path(arena.allocator(), "")) == null);
 }
 
-test "missing settings default every module to enabled" {
+test "missing settings preserve the status line without a shell suffix" {
     var diagnostic: Diagnostic = .{};
     const got = try parse("# no overrides\n", &diagnostic);
     try std.testing.expect(got.user_host);
@@ -166,6 +169,7 @@ test "missing settings default every module to enabled" {
     try std.testing.expect(got.language);
     try std.testing.expect(got.cmd_duration);
     try std.testing.expect(got.character);
+    try std.testing.expect(!got.shell);
 }
 
 test "an unset home loads defaults without looking for a file" {
@@ -177,6 +181,7 @@ test "an unset home loads defaults without looking for a file" {
     try std.testing.expect(got.language);
     try std.testing.expect(got.cmd_duration);
     try std.testing.expect(got.character);
+    try std.testing.expect(!got.shell);
 }
 
 test "modules can be disabled independently" {
@@ -189,6 +194,7 @@ test "modules can be disabled independently" {
         \\language = false
         \\cmd_duration = false
         \\character = true
+        \\shell = true
     , &diagnostic);
 
     try std.testing.expect(!got.user_host);
@@ -197,6 +203,7 @@ test "modules can be disabled independently" {
     try std.testing.expect(!got.language);
     try std.testing.expect(!got.cmd_duration);
     try std.testing.expect(got.character);
+    try std.testing.expect(got.shell);
 }
 
 test "invalid values and module names report their line" {
