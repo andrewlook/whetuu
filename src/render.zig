@@ -1,7 +1,7 @@
-//! Async render orchestrator. Spawns every segment module concurrently via
-//! `Io.async`, then awaits them in display order so the output is deterministic
-//! even though the work overlaps. The character is pure and is rendered
-//! synchronously after the segment line.
+//! Async render orchestrator. Spawns the enabled filesystem modules
+//! concurrently via `Io.async`, then awaits them in display order so the
+//! output is deterministic even though the work overlaps. Pure enabled
+//! modules run inline. The character is rendered after the segment line.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -9,6 +9,7 @@ const Io = std.Io;
 const Writer = std.Io.Writer;
 
 const Env = @import("Env.zig");
+const Modules = @import("config.zig").Modules;
 const Span = @import("style.zig").Span;
 const character = @import("module_character.zig");
 const cmd_duration = @import("module_cmd_duration.zig");
@@ -22,32 +23,45 @@ const user_host = @import("module_user_host.zig");
 /// breathes between the colored segments on either side.
 const separator: Span = .{ .style = .{ .color = .bright_black }, .text = " · " };
 
-/// Renders the full status line to `w`. All modules are spawned before any is
-/// awaited, so their I/O overlaps; awaiting in display order keeps layout
-/// stable. The language module runs detection exactly once — its result also
-/// tints the character, which is pure and rendered synchronously after
-/// the segment line.
-pub fn render(io: Io, arena: Allocator, env: *const Env, w: *Writer) Writer.Error!void {
-    var git_future = io.async(git.run, .{ io, arena, env });
-    var language_future = io.async(language.run, .{ io, arena, env });
+/// Renders the status line to `w`. Enabled I/O modules are spawned before any
+/// is awaited, so their work overlaps; awaiting in display order keeps layout
+/// stable. When enabled, the language module runs detection exactly once. Its
+/// result also tints the character.
+pub fn render(io: Io, arena: Allocator, env: *const Env, modules: Modules, w: *Writer) Writer.Error!void {
+    var git_future: ?Io.Future(?[]const Span) = if (modules.git)
+        io.async(git.run, .{ io, arena, env })
+    else
+        null;
+    var language_future: ?Io.Future(language.Result) = if (modules.language)
+        io.async(language.run, .{ io, arena, env })
+    else
+        null;
 
     // Only git and language touch the filesystem, so only they are worth a
     // task. The rest are pure and run inline while those two overlap —
     // spawning them costs far more than the work they do.
     var wrote_any = false;
-    try writeSegment(w, env.shell, user_host.run(arena, env), &wrote_any);
-    try writeSegment(w, env.shell, directory.run(io, arena, env), &wrote_any);
-    try writeSegment(w, env.shell, git_future.await(io), &wrote_any);
+    if (modules.user_host)
+        try writeSegment(w, env.shell, user_host.run(arena, env), &wrote_any);
+    if (modules.directory)
+        try writeSegment(w, env.shell, directory.run(io, arena, env), &wrote_any);
+    if (git_future) |*future|
+        try writeSegment(w, env.shell, future.await(io), &wrote_any);
 
-    const lang_result = language_future.await(io);
-    try writeSegment(w, env.shell, lang_result.spans, &wrote_any);
-    try writeSegment(w, env.shell, cmd_duration.run(io, arena, env), &wrote_any);
+    const lang_result = if (language_future) |*future| future.await(io) else language.Result{};
+    if (modules.language)
+        try writeSegment(w, env.shell, lang_result.spans, &wrote_any);
+    if (modules.cmd_duration)
+        try writeSegment(w, env.shell, cmd_duration.run(io, arena, env), &wrote_any);
 
-    // The character always appears, on its own line, with a trailing space so
-    // the cursor sits one column clear of the symbol.
-    try w.writeByte('\n');
-    const ch = character.choose(lang_result.lang, env.exit_status);
-    try style.write(w, env.shell, ch.style, ch.text);
+    // A non-empty byte must follow the newline because command substitution in
+    // bash and zsh strips trailing newlines. Keep the trailing space even when
+    // the character is disabled so the segment line remains above the cursor.
+    if (wrote_any) try w.writeByte('\n');
+    if (modules.character) {
+        const ch = character.choose(lang_result.lang, env.exit_status);
+        try style.write(w, env.shell, ch.style, ch.text);
+    }
     try w.writeByte(' ');
 }
 
@@ -83,11 +97,75 @@ test "render emits the directory, a newline, then the trailing character" {
 
     var buf: [4096]u8 = undefined;
     var w: Writer = .fixed(&buf);
-    try render(io, arena.allocator(), &env, &w);
+    try render(io, arena.allocator(), &env, .{}, &w);
 
     const out = w.buffered();
     const newline = std.mem.indexOfScalar(u8, out, '\n').?;
     try std.testing.expect(std.mem.indexOf(u8, out[0..newline], "/") != null);
     try std.testing.expect(std.mem.indexOf(u8, out[newline..], style.icon.star) != null);
     try std.testing.expect(std.mem.endsWith(u8, out, " "));
+}
+
+test "disabled modules do not render and the cursor keeps a prompt space" {
+    var threaded: Io.Threaded = .init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const env: Env = .{
+        .shell = .fish,
+        .cwd = "/",
+        .home = "/nonexistent-home",
+        .width = 80,
+        .duration_ms = 5_000,
+        .exit_status = 0,
+    };
+    const modules: Modules = .{
+        .user_host = false,
+        .directory = false,
+        .git = false,
+        .language = false,
+        .cmd_duration = false,
+        .character = false,
+    };
+
+    var buf: [4096]u8 = undefined;
+    var w: Writer = .fixed(&buf);
+    try render(io, arena.allocator(), &env, modules, &w);
+    try std.testing.expectEqualStrings(" ", w.buffered());
+}
+
+test "character can be disabled without joining the cursor to the segment line" {
+    var threaded: Io.Threaded = .init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    const env: Env = .{
+        .shell = .fish,
+        .cwd = "/",
+        .home = "/nonexistent-home",
+        .width = 80,
+        .duration_ms = 0,
+        .exit_status = 0,
+    };
+    const modules: Modules = .{
+        .user_host = false,
+        .git = false,
+        .language = false,
+        .cmd_duration = false,
+        .character = false,
+    };
+
+    var buf: [4096]u8 = undefined;
+    var w: Writer = .fixed(&buf);
+    try render(io, arena.allocator(), &env, modules, &w);
+    const out = w.buffered();
+    try std.testing.expect(std.mem.indexOfScalar(u8, out, '\n') != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, style.icon.star) == null);
+    try std.testing.expect(std.mem.endsWith(u8, out, "\n "));
 }

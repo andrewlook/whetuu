@@ -4,18 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>whetū — an opinionated, zero-config status line and history picker written in Zig</title>
-<meta name="description" content="A single compiled binary that renders one curated status line for fish, bash and zsh, and binds the up arrow to its own history picker. Every module runs at once via std.Io, so a render costs about what its slowest probe costs.">
+<meta name="description" content="A single compiled binary that renders a configurable status line for fish, bash and zsh, and binds the up arrow to its own history picker. Enabled modules run at once via std.Io, so a render costs about what its slowest probe costs.">
 <link rel="canonical" href="https://yamafaktory.github.io/whetuu/">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://yamafaktory.github.io/whetuu/">
 <meta property="og:title" content="whetū — a zero-config status line and history picker in Zig">
-<meta property="og:description" content="One binary, no config file. Git state, 39 toolchains and a syntax-highlighted history picker, in about 2 ms.">
+<meta property="og:description" content="One binary with optional module switches. Git state, 39 toolchains and a syntax-highlighted history picker, in about 2 ms.">
 <meta property="og:image" content="https://yamafaktory.github.io/whetuu/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="whetū — a zero-config status line and history picker in Zig">
-<meta name="twitter:description" content="One binary, no config file. Git state, 39 toolchains and a syntax-highlighted history picker, in about 2 ms.">
+<meta name="twitter:description" content="One binary with optional module switches. Git state, 39 toolchains and a syntax-highlighted history picker, in about 2 ms.">
 <meta name="twitter:image" content="https://yamafaktory.github.io/whetuu/og.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%E2%AD%90%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -467,7 +467,7 @@ footer p { margin: 0 0 0.4rem; }
   <h1 class="wordmark"><span class="mark" aria-hidden="true">󰦥</span>whetū</h1>
   <p class="say">/fɛˈtuː/ &nbsp;·&nbsp; feh-TOO &nbsp;·&nbsp; Māori for “star”</p>
   <p class="lede">An opinionated, zero-config status line and history picker for fish, bash and zsh, written in Zig.</p>
-  <p class="sub">One compiled binary renders one curated status line, the same for everyone. There is no config file, nothing to theme and nothing to tune, and it renders in about two milliseconds.</p>
+  <p class="sub">One compiled binary renders the full curated status line by default. A small TOML file can disable any module. There is nothing to theme, and it renders in about two milliseconds.</p>
   <p class="sub">It also puts your history on the up arrow. One binary does both, so the picker knows where you are. It opens on what you ran in this directory, and Ctrl+G switches to all of it. Failed commands are never stored, so you do not scroll past your own typos. Your own shell history stays exactly where it is.</p>
 
   <div class="term">
@@ -509,12 +509,12 @@ footer p { margin: 0 0 0.4rem; }
   <p class="note"><b>Needs a <a href="https://www.nerdfonts.com/">Nerd Font</a>.</b> whetuu draws the git branch, the language logos and the star with Nerd Font glyphs. Most terminal setups already run one, so try it first. If the star and the branch glyph come out as empty boxes, switch your terminal font.</p>
 
   <h3>Uninstalling</h3>
-  <p>One line for the program, one for the data. The history store and the version cache live under the XDG directories rather than next to the binary, so removing whetuu never takes your history with it. Run <code>whetuu paths</code> first if you want to see both locations, in case <code>$XDG_DATA_HOME</code> or <code>$XDG_CACHE_HOME</code> moves them on your machine.</p>
+  <p>One line for the program, one for the generated data. The history store and the version cache live under the XDG directories rather than next to the binary, so removing whetuu never takes your history with it. Run <code>whetuu paths</code> first to see them with the optional config path, in case <code>$XDG_DATA_HOME</code> or <code>$XDG_CACHE_HOME</code> moves the generated files on your machine.</p>
   <div class="cmd">
     <code><span class="sigil">$</span> rm ~/.local/bin/whetuu &amp;&amp; rm -rf ~/.local/share/whetuu ~/.cache/whetuu</code>
     <button type="button" data-copy="rm ~/.local/bin/whetuu &amp;&amp; rm -rf ~/.local/share/whetuu ~/.cache/whetuu">Copy</button>
   </div>
-  <p>Then delete the <code># whetuu</code> block from your shell config.</p>
+  <p>Then delete the <code># whetuu</code> block from your shell config. Delete <code>~/.config/whetuu</code> too if you do not want to keep your module settings.</p>
 </section>
 <section class="wrap" id="demo">
   <p class="eyebrow">~/demo</p>
@@ -539,6 +539,16 @@ footer p { margin: 0 0 0.4rem; }
     <div class="mod"><dt>cmd_duration</dt><dd>Timer glyph and elapsed time, when the last command ran for two seconds or more.</dd></div>
     <div class="mod"><dt>character</dt><dd>A star, purple by default or in the language brand colour. Turns red after a failed command.</dd></div>
   </dl>
+  <h3>Choose the modules</h3>
+  <p>Every module is enabled when there is no config file. Create <code>~/.config/whetuu/whetuu.toml</code> and set any module to <code>false</code> to disable it. Omitted keys stay enabled.</p>
+  <pre>[modules]
+user_host = true
+directory = true
+git = true
+language = false
+cmd_duration = true
+character = true</pre>
+  <p class="note">whetuu never creates or rewrites this file. Disabling <b>git</b> or <b>language</b> also skips its file scan and subprocess. A bad setting stops the render and reports the line to fix.</p>
 </section>
 <section class="wrap" id="picker">
   <p class="eyebrow">~/picker</p>
@@ -580,12 +590,12 @@ footer p { margin: 0 0 0.4rem; }
         <tr><td class="first"><code>whetuu render</code></td><td class="desc">Render one status line. Called by the shell hook, not by you.</td></tr>
         <tr><td class="first"><code>whetuu history</code></td><td class="desc">Open the interactive history picker.</td></tr>
         <tr><td class="first"><code>whetuu history add -- &lt;command&gt;</code></td><td class="desc">Record a finished command. Called by the shell hook.</td></tr>
-        <tr><td class="first"><code>whetuu paths</code></td><td class="desc">Print where the history store and version cache live, and whether each file exists yet.</td></tr>
+        <tr><td class="first"><code>whetuu paths</code></td><td class="desc">Print where the config, history store and version cache live, and whether each file exists yet.</td></tr>
       </tbody>
     </table>
   </div>
   <p class="note"><code>render</code> and <code>history add</code> take flags that only the init scripts pass, namely exit status, duration and width. That is why they are left out here.</p>
-  <p class="note"><b>A fresh install has neither file.</b> <code>whetuu paths</code> marks the missing one rather than hiding it, until the first command is recorded and the first toolchain version is cached. With neither <b>$HOME</b> nor the matching XDG variable set it says so, because then whetuu has nowhere to write.</p>
+  <p class="note"><b>A fresh install has no config or generated files.</b> <code>whetuu paths</code> marks each missing path rather than hiding it. The history and cache appear after the first command is recorded and the first toolchain version is cached. With neither <b>$HOME</b> nor the matching XDG variable set it says so, because then whetuu has nowhere to read or write.</p>
 </section>
 <section class="wrap" id="performance">
   <p class="eyebrow">~/performance</p>
@@ -612,13 +622,13 @@ footer p { margin: 0 0 0.4rem; }
   <dl class="mods">
     <div class="mod"><dt>No network</dt><dd>There is no socket, no HTTP client and no sync anywhere in the binary. No telemetry and no update check. There is no account and no server to opt out of.</dd></div>
     <div class="mod"><dt>Two files</dt><dd>Running, whetuu writes exactly two. The history store, created with mode <b>600</b> and reset to it on every write, so one left readable by an older version corrects itself. And a cache of toolchain version strings at <b>~/.cache/whetuu/versions</b>, which holds nothing else and can be deleted whenever you like.</dd></div>
-    <div class="mod"><dt>Spec paths only</dt><dd>The binary goes in <b>~/.local/bin</b>, the history store under <b>$XDG_DATA_HOME</b> and the version cache under <b>$XDG_CACHE_HOME</b>. No directory of our own in your <b>$HOME</b>. <b>whetuu paths</b> prints both data locations.</dd></div>
+    <div class="mod"><dt>Three clear paths</dt><dd>The optional config is <b>~/.config/whetuu/whetuu.toml</b>. The history store lives under <b>$XDG_DATA_HOME</b> and the version cache under <b>$XDG_CACHE_HOME</b>. <b>whetuu paths</b> prints all three locations.</dd></div>
     <div class="mod"><dt>One install edit</dt><dd>The installer appends the init line to the config of the shell in <b>$SHELL</b>, and nothing else. Not the config of a shell you do not use, and never twice. A <b>PATH</b> line joins it only when <b>~/.local/bin</b> is not already on your <b>PATH</b>. <b>WHETUU_NO_MODIFY=1</b> makes it print them instead.</dd></div>
     <div class="mod"><dt>Skip a command</dt><dd>Start a command with a space and it is never recorded. Use it for the ones carrying a token. Only successful commands are stored at all.</dd></div>
-    <div class="mod"><dt>No shell, ever</dt><dd>whetuu runs two subprocesses: <b>git</b> and the toolchain version probe. Both get a fixed list of arguments rather than a command line, so nothing you type is ever interpreted as a command. State like a rebase in progress is read straight out of <b>.git</b> with no subprocess at all.</dd></div>
+    <div class="mod"><dt>No shell, ever</dt><dd>When their modules are enabled, whetuu can run two subprocesses: <b>git</b> and the toolchain version probe. Both get a fixed list of arguments rather than a command line, so nothing you type is ever interpreted as a command. State like a rebase in progress is read straight out of <b>.git</b> with no subprocess at all.</dd></div>
     <div class="mod"><dt>Escapes defanged</dt><dd>Every control byte in a command, a branch name or a directory becomes a <b>?</b> before it reaches your terminal. A repository you just cloned cannot repaint your screen or move your cursor through whetuu.</dd></div>
-    <div class="mod"><dt>Nothing to configure</dt><dd>No config file means no config parser, no theme format and nothing of yours being executed at startup. The attack surface is the binary and the two commands above.</dd></div>
-    <div class="mod"><dt>One caveat</dt><dd>The language module picks which toolchain to probe from the files in the current directory, so entering an untrusted repository can make whetuu run something like <b>node --version</b>. It runs whatever your <b>PATH</b> resolves, never a binary from the repository.</dd></div>
+    <div class="mod"><dt>Boolean config only</dt><dd>The config accepts six module switches under one <b>[modules]</b> table. It cannot contain commands, paths or arguments. whetuu reads it and never writes it.</dd></div>
+    <div class="mod"><dt>One caveat</dt><dd>When enabled, the language module picks which toolchain to probe from the files in the current directory, so entering an untrusted repository can make whetuu run something like <b>node --version</b>. It runs whatever your <b>PATH</b> resolves, never a binary from the repository. Set <b>language = false</b> to skip the scan and probe.</dd></div>
     <div class="mod"><dt>Checkable downloads</dt><dd>The Linux builds are static musl with no runtime dependencies, and every release ships a <b>SHA256SUMS</b> file. The source is <a href="https://github.com/yamafaktory/whetuu">on GitHub</a> and builds from it with one command.</dd></div>
   </dl>
 </section>

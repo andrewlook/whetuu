@@ -26,10 +26,11 @@ The macron in `ū` makes that vowel long, and a long vowel takes the stress, so
 it falls on the second syllable. The ASCII name doubles the `u` to write that
 same long vowel.
 
-There is nothing to configure. One compiled binary renders one curated status
-line, the same for everyone. Every module that reads the disk runs at the same
-time via `std.Io`, so a render costs about what its slowest probe costs. See
-[Performance](#performance).
+whetuu needs no configuration. One compiled binary renders the full curated
+status line by default. You can disable individual modules with one small TOML
+file. Every enabled module that reads the disk runs at the same time via
+`std.Io`, so a render costs about what its slowest probe costs. See
+[Configuration](#configuration) and [Performance](#performance).
 
 > **Needs a [Nerd Font](https://www.nerdfonts.com/).** whetuu draws the git
 > branch, the language logos and the star with Nerd Font glyphs.
@@ -57,6 +58,30 @@ Left to right, each shown only when relevant:
 | `language`    | Logo and toolchain version in the brand color, for 39 languages and tools. Detected from a project manifest (`Cargo.toml`, `mix.exs`, …), a source file extension (`*.odin`, `*.rkt`, …), or an infra marker (`flake.nix`, `Dockerfile`, `*.tf` for Terraform and OpenTofu) |
 | `cmd_duration`| Timer glyph and `<time>` when the last command ran for 2 s or more          |
 | `character`   | A star, purple by default, or in the language brand color. Turns red after a failed command |
+
+## Configuration
+
+Every module is enabled when there is no config file. To hide modules, create
+`~/.config/whetuu/whetuu.toml` and set their names to `false`:
+
+```toml
+[modules]
+user_host = true
+directory = true
+git = true
+language = false
+cmd_duration = true
+character = true
+```
+
+Every key is optional. Set it to `true` to enable the module and `false` to
+disable it. Disabling `git` or `language` also skips its file scan and
+subprocess. Disabling `language` leaves an enabled character purple because no
+project language is detected.
+
+whetuu never creates or rewrites this file. A bad table, module name or value
+stops the render and reports the line to fix. Run `whetuu paths` to see the
+config path with the history and cache paths.
 
 ## Performance
 
@@ -114,25 +139,27 @@ whetuu reads your repository and prints a line. Here is what that involves.
 
 - **No network access.** The binary has no socket, HTTP or DNS code. There is no
   telemetry and no update check.
-- **Every path is one the spec already names.** The binary goes in
-  `~/.local/bin`, the history store under `$XDG_DATA_HOME` and the version cache
-  under `$XDG_CACHE_HOME`. whetuu creates no directory of its own in `$HOME`.
-  Run `whetuu paths` to see both data locations, and whether each file exists
-  yet. [Uninstall](#uninstall) lists what to remove.
+- **Every path has one purpose.** The binary goes in `~/.local/bin`. The
+  optional config is `~/.config/whetuu/whetuu.toml`. The history store lives
+  under `$XDG_DATA_HOME` and the version cache under `$XDG_CACHE_HOME`. Run
+  `whetuu paths` to see all three locations and whether each file exists yet.
+  [Uninstall](#uninstall) lists what to remove.
 - **The installer edits one file, once.** It appends an `init` line to the
   config of the shell in `$SHELL`, guarded so a second run changes nothing. Not
   the config of a shell you do not use. A `PATH` line joins it only when
   `~/.local/bin` is not already on your `PATH`. Set `WHETUU_NO_MODIFY=1` and it
   prints them instead.
-- **No config file.** whetuu has none, so there is no config parser and no
-  format for anything to smuggle through. Running, it writes two files. One is
-  the history
-  store. The other is a version cache at `~/.cache/whetuu/versions`, or under
-  `$XDG_CACHE_HOME` when that is set. The cache holds toolchain version strings
-  and nothing else. Delete it whenever you like.
-- **Two subprocesses, both bounded.** `git status --porcelain=2 --branch -z`,
-  and the version command of the detected toolchain (`zig version`,
-  `node --version`, …). Nothing else is executed.
+- **The config only accepts module switches.** Its one `[modules]` table takes
+  six boolean values. It cannot contain commands, paths or arguments. whetuu
+  reads it and never writes it. Running, whetuu writes two other files. One is
+  the history store. The other is a version cache at
+  `~/.cache/whetuu/versions`, or under `$XDG_CACHE_HOME` when that is set. The
+  cache holds toolchain version strings and nothing else. Delete it whenever
+  you like.
+- **Two possible subprocesses, both bounded.** When their modules are enabled,
+  whetuu runs `git status --porcelain=2 --branch -z` and the version command of
+  the detected toolchain (`zig version`, `node --version`, …). Nothing else is
+  executed.
 - **The history store is `0600`**, set again on every append. Command lines
   routinely contain paths and secrets. The store lives at
   `~/.local/share/whetuu/history`, or under `$XDG_DATA_HOME` when that is set.
@@ -159,11 +186,12 @@ whetuu reads your repository and prints a line. Here is what that involves.
   the picker, not a safeguard. It filters out your typos, not your working
   `curl`.
 
-One thing to know. The language module picks which toolchain to probe from the
-files in the current directory. So entering an untrusted repository can make
-whetuu run something like `node --version`. It runs the binary your `PATH`
-resolves, never one from the repository. If you keep `.` in your `PATH` that
-distinction goes away, and it goes away for every other tool you run too.
+One thing to know. When enabled, the language module picks which toolchain to
+probe from the files in the current directory. So entering an untrusted
+repository can make whetuu run something like `node --version`. It runs the
+binary your `PATH` resolves, never one from the repository. If you keep `.` in
+your `PATH` that distinction goes away, and it goes away for every other tool
+you run too. Set `language = false` to disable the scan and probe.
 
 ## Install
 
@@ -232,6 +260,7 @@ the program. The second removes the history store and the version cache, which
 live under the XDG directories rather than next to the binary. Run
 `whetuu paths` before you delete anything and it prints both locations, in case
 `$XDG_DATA_HOME` or `$XDG_CACHE_HOME` moves them on your machine.
+Delete `~/.config/whetuu` too if you do not want to keep your module settings.
 
 ### From source
 
@@ -241,8 +270,14 @@ nightly:
 ```sh
 git clone https://github.com/yamafaktory/whetuu.git
 cd whetuu
-zig build --release=fast
-mv zig-out/bin/whetuu ~/.local/bin/
+tools/install.sh
+```
+
+The script builds a ReleaseFast binary and installs it to `~/.local/bin`.
+Choose another directory the same way as the release installer:
+
+```sh
+WHETUU_INSTALL_DIR="$HOME/bin" tools/install.sh
 ```
 
 Other build steps:
@@ -302,15 +337,16 @@ history picker is on the up arrow. The full command surface:
 | `whetuu render` | Render one status line. Called by the shell hook, not by you |
 | `whetuu history` | Open the interactive history picker |
 | `whetuu history add -- <command>` | Record a finished command. Called by the shell hook |
-| `whetuu paths` | Print where the history store and version cache live, and whether each file exists yet |
+| `whetuu paths` | Print where the config, history store and version cache live, and whether each file exists yet |
 
 `render` and `history add` take flags that only the init scripts pass, namely
 exit status, duration and width. That is why they are left out here.
 
 `whetuu paths` marks a file that is not there yet rather than hiding it. A fresh
-install has neither until the first command is recorded and the first toolchain
-version is cached. With neither `$HOME` nor the matching XDG variable set it says
-so, because then whetuu has nowhere to write.
+install has no config. It creates the other two paths after the first command is
+recorded and the first toolchain version is cached. With neither `$HOME` nor the
+matching XDG variable set it says so, because then whetuu has nowhere to read or
+write.
 
 ## History
 

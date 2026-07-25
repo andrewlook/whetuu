@@ -2,7 +2,7 @@
 //!   whetuu init <fish|bash|zsh>   — print the shell integration script
 //!   whetuu render [flags]         — render the status line (called by the shell)
 //!   whetuu history [add ...]      — open the history picker, or record a command
-//!   whetuu paths                  — print where the history and cache live
+//!   whetuu paths                  — print the config, history and cache paths
 //! plus `whetuu --version`.
 
 const std = @import("std");
@@ -13,6 +13,7 @@ const build_options = @import("build_options");
 
 const Env = @import("Env.zig");
 const cli = @import("cli.zig");
+const config = @import("config.zig");
 const history = @import("history.zig");
 const init_scripts = @import("init_scripts.zig");
 const picker = @import("picker.zig");
@@ -82,12 +83,12 @@ fn unknownSubcommand(io: Io, arena: Allocator, sub: []const u8) !void {
     std.process.exit(2);
 }
 
-/// Prints where whetuu keeps its two files, and whether each exists yet.
-/// Both follow the XDG base directory spec, so neither is under the directory
-/// the installer put the binary in: removing whetuu should not remove the
-/// history you built up with it.
+/// Prints the optional config path and the two generated file paths, plus
+/// whether each exists yet. All live outside the install directory, so
+/// removing the binary does not remove the user's settings or history.
 fn runPaths(io: Io, arena: Allocator, environ: *std.process.Environ.Map) !void {
     const home = environ.get("HOME") orelse "";
+    const config_path = try config.path(arena, home);
     const store = try history.storePath(arena, environ.get("XDG_DATA_HOME") orelse "", home);
     const cache = try version_cache.path(arena, environ.get("XDG_CACHE_HOME") orelse "", home);
 
@@ -96,15 +97,16 @@ fn runPaths(io: Io, arena: Allocator, environ: *std.process.Environ.Map) !void {
     const w = &fw.interface;
 
     try w.writeAll(style.sgr.fg_purple ++ style.icon.star ++ style.sgr.reset ++ " " ++
-        style.sgr.dim ++ "whetuu keeps two files, both outside the install directory" ++
+        style.sgr.dim ++ "whetuu uses these paths, all outside the install directory" ++
         style.sgr.reset ++ "\n\n");
+    try writePath(io, w, "config", config_path);
     try writePath(io, w, "history", store);
     try writePath(io, w, "cache", cache);
     try w.flush();
 }
 
-/// One `<label>  <path>  <state>` row. A null path means neither `$HOME` nor
-/// the matching XDG variable was set, so whetuu has nowhere to write.
+/// One `<label>  <path>  <state>` row. A null path means the HOME or XDG value
+/// needed to resolve it was unset.
 fn writePath(io: Io, w: *std.Io.Writer, label: []const u8, path: ?[]const u8) !void {
     const dim = style.sgr.dim;
     const reset = style.sgr.reset;
@@ -125,6 +127,10 @@ fn writePath(io: Io, w: *std.Io.Writer, label: []const u8, path: ?[]const u8) !v
 /// Builds the `Env` from flags and environment, then renders to stdout.
 fn runRender(io: Io, arena: Allocator, environ: *std.process.Environ.Map, args: []const [:0]const u8) !void {
     const opts = try cli.parseRender(args);
+    const home = environ.get("HOME") orelse "";
+    var diagnostic: config.Diagnostic = .{};
+    const modules = config.load(io, arena, home, &diagnostic) catch |err|
+        return configFailure(io, arena, home, diagnostic, err);
 
     var cwd_buf: [max_path_bytes]u8 = undefined;
     const cwd_len = std.process.currentPath(io, &cwd_buf) catch 0;
@@ -132,7 +138,7 @@ fn runRender(io: Io, arena: Allocator, environ: *std.process.Environ.Map, args: 
     const env: Env = .{
         .shell = opts.shell,
         .cwd = cwd_buf[0..cwd_len],
-        .home = environ.get("HOME") orelse "",
+        .home = home,
         .user = environ.get("USER") orelse "",
         .path = environ.get("PATH") orelse "",
         .cache_home = environ.get("XDG_CACHE_HOME") orelse "",
@@ -144,8 +150,32 @@ fn runRender(io: Io, arena: Allocator, environ: *std.process.Environ.Map, args: 
 
     var out_buf: [4096]u8 = undefined;
     var fw = Io.File.stdout().writer(io, &out_buf);
-    try render.render(io, arena, &env, &fw.interface);
+    try render.render(io, arena, &env, modules, &fw.interface);
     try fw.interface.flush();
+}
+
+/// Reports an unreadable or malformed module configuration and exits before
+/// rendering. Repeating the error is preferable to silently using switches the
+/// user did not ask for.
+fn configFailure(io: Io, arena: Allocator, home: []const u8, diagnostic: config.Diagnostic, err: anyerror) noreturn {
+    const config_path = config.path(arena, home) catch null;
+    const display_path = if (config_path) |p| style.sanitize(arena, p) catch p else "~/.config/whetuu/whetuu.toml";
+
+    var buf: [1024]u8 = undefined;
+    var fw = Io.File.stderr().writer(io, &buf);
+    if (diagnostic.line > 0) {
+        fw.interface.print(
+            "whetuu: {s}:{d}: {s}\n",
+            .{ display_path, diagnostic.line, config.errorMessage(err) },
+        ) catch {};
+    } else {
+        fw.interface.print(
+            "whetuu: cannot read {s}: {s}\n",
+            .{ display_path, @errorName(err) },
+        ) catch {};
+    }
+    fw.interface.flush() catch {};
+    std.process.exit(2);
 }
 
 /// Handles the `history` subcommand: `history add [--status N] -- <command>`
@@ -236,7 +266,7 @@ fn usage(io: Io) !void {
         "  " ++ purple ++ "render" ++ reset ++ "                 " ++ dim ++ "Render the status line (called by the shell)" ++ reset ++ "\n" ++
         "  " ++ purple ++ "history" ++ reset ++ "                " ++ dim ++ "Open the interactive history picker" ++ reset ++ "\n" ++
         "  " ++ purple ++ "history add" ++ reset ++ "            " ++ dim ++ "Record a finished command (status 0 only)" ++ reset ++ "\n" ++
-        "  " ++ purple ++ "paths" ++ reset ++ "                  " ++ dim ++ "Print where the history and cache live" ++ reset ++ "\n" ++
+        "  " ++ purple ++ "paths" ++ reset ++ "                  " ++ dim ++ "Print the config, history and cache paths" ++ reset ++ "\n" ++
         "  " ++ purple ++ "--version" ++ reset ++ "              " ++ dim ++ "Print the version" ++ reset ++ "\n";
 
     var buf: [256]u8 = undefined;
@@ -258,6 +288,7 @@ fn writeVersion(io: Io) !void {
 test {
     _ = @import("Env.zig");
     _ = @import("cli.zig");
+    _ = @import("config.zig");
     _ = @import("highlight.zig");
     _ = @import("history.zig");
     _ = @import("init_scripts.zig");
@@ -274,7 +305,7 @@ test {
     _ = @import("version_cache.zig");
 }
 
-test "paths reports both files, and says so when there is nowhere to write" {
+test "paths reports the config and both generated files" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -283,20 +314,23 @@ test "paths reports both files, and says so when there is nowhere to write" {
     // rather than under the directory the installer used.
     try std.testing.expectEqualStrings("/xd/whetuu/history", (try history.storePath(a, "/xd", "/h")).?);
     try std.testing.expectEqualStrings("/xc/whetuu/versions", (try version_cache.path(a, "/xc", "/h")).?);
+    try std.testing.expectEqualStrings("/h/.config/whetuu/whetuu.toml", (try config.path(a, "/h")).?);
     try std.testing.expectEqualStrings("/h/.local/share/whetuu/history", (try history.storePath(a, "", "/h")).?);
     try std.testing.expectEqualStrings("/h/.cache/whetuu/versions", (try version_cache.path(a, "", "/h")).?);
 
-    // whetuu creates no directory of its own in $HOME, so removing the binary
-    // from ~/.local/bin cannot take the history with it, and an uninstall has
-    // only paths the XDG spec already names to clean up.
+    // Generated files stay in the data and cache locations. The optional
+    // configuration uses the standard per-user config directory.
     for ([_][]const u8{
+        (try config.path(a, "/h")).?,
         (try history.storePath(a, "", "/h")).?,
         (try version_cache.path(a, "", "/h")).?,
     }) |path| {
-        try std.testing.expect(std.mem.startsWith(u8, path, "/h/.local/share/") or
+        try std.testing.expect(std.mem.startsWith(u8, path, "/h/.config/") or
+            std.mem.startsWith(u8, path, "/h/.local/share/") or
             std.mem.startsWith(u8, path, "/h/.cache/"));
     }
 
+    try std.testing.expect((try config.path(a, "")) == null);
     try std.testing.expect((try history.storePath(a, "", "")) == null);
     try std.testing.expect((try version_cache.path(a, "", "")) == null);
 }

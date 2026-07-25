@@ -1,12 +1,13 @@
 # whetū
 
-An opinionated, zero-config, async status line and history picker
+An opinionated async status line and history picker with no required setup
 (fish/bash/zsh) in Zig 0.17.
 The binary is installed as the ASCII command `whetuu` (whetū is Māori for "star").
 
-The status line format and module set are hardcoded — there is intentionally no
-config file. A single compiled binary renders the whole line by running every module
-concurrently via `std.Io` (`Io.async` → `Future`, backed by `Io.Threaded`).
+The status line format is hardcoded. An optional TOML file at
+`~/.config/whetuu/whetuu.toml` enables or disables its six modules. A single
+compiled binary renders the line by running every enabled I/O module concurrently
+via `std.Io` (`Io.async` → `Future`, backed by `Io.Threaded`).
 
 ## Working approach
 
@@ -140,6 +141,8 @@ by someone deciding whether to use whetuu, so it has to be plain.
 - `zig build` — compile
 - `zig build --release=fast` — optimized build installed to `zig-out/bin/whetuu`,
   for trying a change locally. Run after every change (see above)
+- `tools/install.sh` — build the optimized binary and install it to
+  `~/.local/bin`, or to `$WHETUU_INSTALL_DIR` when set
 - `zig build check` — type-check without producing an artifact
 - `zig build run -- <args>` — compile and run (e.g. `-- render --shell fish --status 0`)
 - `zig build release` — cross-compile + package a tarball per target into
