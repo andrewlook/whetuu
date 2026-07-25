@@ -12,12 +12,14 @@ const std = @import("std");
 const Io = std.Io;
 const Writer = std.Io.Writer;
 
+const HistoryKey = @import("config.zig").HistoryKey;
 const Shell = @import("Env.zig").Shell;
 const style = @import("style.zig");
 
 const bash_init = @embedFile("init.bash");
 const fish_init = @embedFile("init.fish");
 const zsh_init = @embedFile("init.zsh");
+const history_binding_marker = "    # @whetuu-history-binding@\n";
 
 /// How a shell loads the integration: the config file it goes in, and the line
 /// that goes there.
@@ -26,13 +28,48 @@ const Setup = struct {
     line: []const u8,
 };
 
-/// The embedded integration script for `shell`.
-fn script(shell: Shell) []const u8 {
+/// The embedded integration script for `shell`, before its configured history
+/// binding replaces the marker.
+fn embeddedScript(shell: Shell) []const u8 {
     return switch (shell) {
         .bash => bash_init,
         .fish => fish_init,
         .zsh => zsh_init,
     };
+}
+
+/// Safe shell source for the two named bindings. No configuration bytes are
+/// interpolated here.
+fn historyBinding(shell: Shell, key: HistoryKey) []const u8 {
+    return switch (shell) {
+        .fish => switch (key) {
+            .up => "    bind up __whetuu_history\n",
+            .ctrl_up => "    bind ctrl-up __whetuu_history\n",
+            .alt_up => "    bind alt-up __whetuu_history\n",
+        },
+        .bash => switch (key) {
+            .up => "    # Both cursor sequences are common, depending on keypad mode.\n" ++
+                "    bind '\"\\e[A\": \"\\C-x\\C-w\\C-x\\C-z\"'\n" ++
+                "    bind '\"\\eOA\": \"\\C-x\\C-w\\C-x\\C-z\"'\n",
+            .ctrl_up => "    bind '\"\\e[1;5A\": \"\\C-x\\C-w\\C-x\\C-z\"'\n",
+            .alt_up => "    bind '\"\\e[1;3A\": \"\\C-x\\C-w\\C-x\\C-z\"'\n",
+        },
+        .zsh => switch (key) {
+            .up => "    # Both cursor sequences are common, depending on keypad mode.\n" ++
+                "    bindkey '^[[A' __whetuu_history\n" ++
+                "    bindkey '^[OA' __whetuu_history\n",
+            .ctrl_up => "    bindkey '^[[1;5A' __whetuu_history\n",
+            .alt_up => "    bindkey '^[[1;3A' __whetuu_history\n",
+        },
+    };
+}
+
+fn writeScript(w: *Writer, shell: Shell, key: HistoryKey) Writer.Error!void {
+    const source = embeddedScript(shell);
+    const marker_at = std.mem.indexOf(u8, source, history_binding_marker) orelse unreachable;
+    try w.writeAll(source[0..marker_at]);
+    try w.writeAll(historyBinding(shell, key));
+    try w.writeAll(source[marker_at + history_binding_marker.len ..]);
 }
 
 /// Where the integration line goes for `shell`, and what it says.
@@ -73,7 +110,7 @@ fn writeHint(w: *Writer, shell: Shell, shell_name: []const u8) Writer.Error!void
 /// Writes the integration script for `shell_name` to stdout, or the setup hint
 /// when stdout is a terminal. Returns `error.UnknownShell` for an unrecognized
 /// shell.
-pub fn write(io: Io, shell_name: []const u8) !void {
+pub fn write(io: Io, shell_name: []const u8, history_key: HistoryKey) !void {
     const shell = try parse(shell_name);
     const stdout = Io.File.stdout();
 
@@ -86,7 +123,7 @@ pub fn write(io: Io, shell_name: []const u8) !void {
     if (interactive) {
         try writeHint(&fw.interface, shell, shell_name);
     } else {
-        try fw.interface.writeAll(script(shell));
+        try writeScript(&fw.interface, shell, history_key);
     }
 
     try fw.interface.flush();
@@ -94,8 +131,9 @@ pub fn write(io: Io, shell_name: []const u8) !void {
 
 test "every supported shell resolves to its embedded script" {
     for ([_][]const u8{ "bash", "fish", "zsh" }) |name| {
-        const source = script(try parse(name));
+        const source = embeddedScript(try parse(name));
         try std.testing.expect(std.mem.indexOf(u8, source, "whetuu") != null);
+        try std.testing.expect(std.mem.indexOf(u8, source, history_binding_marker) != null);
     }
 }
 
@@ -127,5 +165,45 @@ test "the hint is short enough to read, unlike the script it replaces" {
 
     const lines = std.mem.count(u8, w.buffered(), "\n");
     try std.testing.expect(lines <= 8);
-    try std.testing.expect(std.mem.count(u8, script(.fish), "\n") > lines * 3);
+    try std.testing.expect(std.mem.count(u8, embeddedScript(.fish), "\n") > lines * 3);
+}
+
+test "history binding selects Up, Ctrl-Up or Alt-Up for every shell" {
+    const cases = [_]struct {
+        shell: Shell,
+        up: []const u8,
+        ctrl_up: []const u8,
+        alt_up: []const u8,
+    }{
+        .{ .shell = .fish, .up = "bind up", .ctrl_up = "bind ctrl-up", .alt_up = "bind alt-up" },
+        .{ .shell = .bash, .up = "\\e[A", .ctrl_up = "\\e[1;5A", .alt_up = "\\e[1;3A" },
+        .{ .shell = .zsh, .up = "^[[A", .ctrl_up = "^[[1;5A", .alt_up = "^[[1;3A" },
+    };
+
+    var buf: [8192]u8 = undefined;
+    for (cases) |case| {
+        var up_writer: Writer = .fixed(&buf);
+        try writeScript(&up_writer, case.shell, .up);
+        const up = up_writer.buffered();
+        try std.testing.expect(std.mem.indexOf(u8, up, case.up) != null);
+        try std.testing.expect(std.mem.indexOf(u8, up, case.ctrl_up) == null);
+        try std.testing.expect(std.mem.indexOf(u8, up, case.alt_up) == null);
+        try std.testing.expect(std.mem.indexOf(u8, up, history_binding_marker) == null);
+
+        var ctrl_writer: Writer = .fixed(&buf);
+        try writeScript(&ctrl_writer, case.shell, .ctrl_up);
+        const ctrl_up = ctrl_writer.buffered();
+        try std.testing.expect(std.mem.indexOf(u8, ctrl_up, case.ctrl_up) != null);
+        try std.testing.expect(std.mem.indexOf(u8, ctrl_up, case.up) == null);
+        try std.testing.expect(std.mem.indexOf(u8, ctrl_up, case.alt_up) == null);
+        try std.testing.expect(std.mem.indexOf(u8, ctrl_up, history_binding_marker) == null);
+
+        var alt_writer: Writer = .fixed(&buf);
+        try writeScript(&alt_writer, case.shell, .alt_up);
+        const alt_up = alt_writer.buffered();
+        try std.testing.expect(std.mem.indexOf(u8, alt_up, case.alt_up) != null);
+        try std.testing.expect(std.mem.indexOf(u8, alt_up, case.up) == null);
+        try std.testing.expect(std.mem.indexOf(u8, alt_up, case.ctrl_up) == null);
+        try std.testing.expect(std.mem.indexOf(u8, alt_up, history_binding_marker) == null);
+    }
 }

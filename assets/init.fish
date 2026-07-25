@@ -26,12 +26,12 @@ function __whetuu_postexec --on-event fish_postexec
     end
 end
 
-# Up-arrow opens the whetuu history picker and runs the chosen command right
-# away. Anything already typed on the command line seeds the picker's search
-# field, and the last failed command is passed with --last so it appears marked
-# at the top. Cancelling the picker leaves the slot alone, so the failed command
-# is still offered next time. The picker draws on /dev/tty, so its stdout is only
-# the choice.
+# The configured key opens the whetuu history picker and runs the chosen command
+# right away. Anything already typed on the command line seeds the picker's
+# search field, and the last failed command is passed with --last so it appears
+# marked at the top. Cancelling the picker leaves the slot alone, so the failed
+# command is still offered next time. The picker draws on /dev/tty, so its stdout
+# is only the choice.
 function __whetuu_history
     set -l initial (commandline)
     set -l picked (command whetuu history --query "$initial" --last "$__whetuu_failed" --last-at "$__whetuu_failed_at" | string collect)
@@ -44,5 +44,5 @@ function __whetuu_history
 end
 
 if status is-interactive
-    bind up __whetuu_history
+    # @whetuu-history-binding@
 end

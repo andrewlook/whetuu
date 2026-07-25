@@ -5,9 +5,10 @@ An opinionated async status line and history picker with no required setup
 The binary is installed as the ASCII command `whetuu` (whetū is Māori for "star").
 
 The status line format is hardcoded. An optional TOML file at
-`~/.config/whetuu/whetuu.toml` enables or disables its seven modules. A single
-compiled binary renders the line by running every enabled I/O module concurrently
-via `std.Io` (`Io.async` → `Future`, backed by `Io.Threaded`).
+`~/.config/whetuu/whetuu.toml` enables or disables its seven modules and chooses
+the history picker keys. A single compiled binary renders the line by running
+every enabled I/O module concurrently via `std.Io` (`Io.async` → `Future`,
+backed by `Io.Threaded`).
 
 ## Working approach
 
@@ -128,11 +129,11 @@ by someone deciding whether to use whetuu, so it has to be plain.
 - One exception: the README's opening line, *"An opinionated, zero-config status
   line and history picker for fish, bash and zsh, written in Zig"*. It is the
   project's tagline. It names both halves on purpose, because naming only the
-  first hides that whetuu takes the up arrow. Leave it alone.
+  first hides the picker. Leave it alone.
 - **Never call what whetuu renders a "prompt".** It is a status line. A prompt is
-  what a shell draws and owns, and whetuu also takes the up arrow, so the word
-  oversells what it leaves alone. The word is fine in its unrelated sense, as in
-  a password prompt or a Gatekeeper prompt.
+  what a shell draws and owns, and whetuu also owns a history binding, so the
+  word oversells what it leaves alone. The word is fine in its unrelated sense,
+  as in a password prompt or a Gatekeeper prompt.
 - Prefer a full stop to a dash when joining two thoughts.
 - Say the thing, then explain it. Do not build up to the point.
 

@@ -1,16 +1,31 @@
-//! Optional module configuration read from `~/.config/whetuu/whetuu.toml`.
-//! A missing file preserves the original status line, with its six modules on
-//! and the optional shell suffix off. The accepted TOML schema is deliberately
-//! small: one `[modules]` table whose known keys have boolean values.
+//! Optional configuration read from `~/.config/whetuu/whetuu.toml`. A missing
+//! file preserves the original status line and Up binding. The accepted TOML
+//! schema is deliberately small: boolean module switches and two named history
+//! keys.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Dir = std.Io.Dir;
 const Io = std.Io;
 
-/// Upper bound for the configuration file. Seven boolean settings should stay
+/// Upper bound for the configuration file. Its handful of settings should stay
 /// tiny, and a bound keeps an accidental large file off the render path.
 const read_limit: Io.Limit = .limited(64 * 1024);
+
+/// Named picker bindings. Arbitrary escape sequences are deliberately absent
+/// so configuration text never becomes generated shell code.
+pub const HistoryKey = enum {
+    up,
+    ctrl_up,
+    alt_up,
+};
+
+/// The control character that switches the picker's directory and all-history
+/// scopes. It is parsed from a named `ctrl-a` through `ctrl-z` value, never a
+/// raw byte from the configuration file.
+pub const ScopeKey = struct {
+    code: u8 = 0x07, // Ctrl+G
+};
 
 /// Enable switches for each render module. These defaults preserve the status
 /// line produced when no configuration file exists.
@@ -24,6 +39,14 @@ pub const Modules = struct {
     shell: bool = false,
 };
 
+/// Every setting resolved from the file, with defaults for omitted tables and
+/// keys.
+pub const Settings = struct {
+    modules: Modules = .{},
+    history_key: HistoryKey = .up,
+    history_scope_key: ScopeKey = .{},
+};
+
 const Module = enum(u3) {
     user_host,
     directory,
@@ -34,6 +57,11 @@ const Module = enum(u3) {
     shell,
 };
 
+const Table = enum {
+    modules,
+    history,
+};
+
 /// Location of a parse error. Zero means the file could not be read before a
 /// line was parsed.
 pub const Diagnostic = struct {
@@ -41,19 +69,24 @@ pub const Diagnostic = struct {
 };
 
 pub const ParseError = error{
-    ExpectedModulesTable,
+    ExpectedTable,
     UnsupportedTable,
     DuplicateTable,
     ExpectedAssignment,
     ExpectedBoolean,
+    ExpectedString,
     UnknownModule,
     DuplicateModule,
+    UnknownHistorySetting,
+    DuplicateHistorySetting,
+    UnknownHistoryKey,
+    UnknownScopeKey,
 };
 
-/// Loads the module switches. A missing file or an unset HOME uses defaults;
+/// Loads all settings. A missing file or an unset HOME uses defaults;
 /// malformed and unreadable files are errors so a typo cannot silently change
-/// what the status line runs.
-pub fn load(io: Io, arena: Allocator, home: []const u8, diagnostic: *Diagnostic) !Modules {
+/// the status line or shell integration.
+pub fn load(io: Io, arena: Allocator, home: []const u8, diagnostic: *Diagnostic) !Settings {
     const config_path = (try path(arena, home)) orelse return .{};
     const bytes = Dir.cwd().readFileAlloc(io, config_path, arena, read_limit) catch |err| switch (err) {
         error.FileNotFound => return .{},
@@ -71,24 +104,31 @@ pub fn path(arena: Allocator, home: []const u8) Allocator.Error!?[]const u8 {
 /// Human-readable detail for a parse error.
 pub fn errorMessage(err: anyerror) []const u8 {
     return switch (err) {
-        error.ExpectedModulesTable => "settings must be under a [modules] table",
-        error.UnsupportedTable => "only the [modules] table is supported",
-        error.DuplicateTable => "the [modules] table appears more than once",
-        error.ExpectedAssignment => "expected a module = true or false assignment",
+        error.ExpectedTable => "settings must be under a [modules] or [history] table",
+        error.UnsupportedTable => "only the [modules] and [history] tables are supported",
+        error.DuplicateTable => "a configuration table appears more than once",
+        error.ExpectedAssignment => "expected a name = value assignment",
         error.ExpectedBoolean => "module values must be true or false",
+        error.ExpectedString => "history keys must be quoted strings",
         error.UnknownModule => "unknown module name",
         error.DuplicateModule => "module is configured more than once",
+        error.UnknownHistorySetting => "unknown history setting",
+        error.DuplicateHistorySetting => "history setting is configured more than once",
+        error.UnknownHistoryKey => "history key must be \"up\", \"ctrl-up\" or \"alt-up\"",
+        error.UnknownScopeKey => "history scope key must be Ctrl plus an unused letter",
         else => "configuration could not be read",
     };
 }
 
 /// Parses the supported TOML schema. Blank lines and comments are allowed,
 /// including comments after a table or value.
-fn parse(text: []const u8, diagnostic: *Diagnostic) ParseError!Modules {
-    var modules: Modules = .{};
+fn parse(text: []const u8, diagnostic: *Diagnostic) ParseError!Settings {
+    var settings: Settings = .{};
     var seen_modules: u8 = 0;
-    var in_modules = false;
-    var saw_table = false;
+    var seen_history: SeenHistory = .{};
+    var saw_modules = false;
+    var saw_history = false;
+    var table: ?Table = null;
 
     var lines = std.mem.splitScalar(u8, text, '\n');
     var line_number: usize = 0;
@@ -99,15 +139,24 @@ fn parse(text: []const u8, diagnostic: *Diagnostic) ParseError!Modules {
         if (line.len == 0) continue;
 
         if (line[0] == '[') {
-            if (!std.mem.eql(u8, line, "[modules]"))
+            table = if (std.mem.eql(u8, line, "[modules]"))
+                .modules
+            else if (std.mem.eql(u8, line, "[history]"))
+                .history
+            else
                 return invalid(diagnostic, line_number, error.UnsupportedTable);
-            if (saw_table) return invalid(diagnostic, line_number, error.DuplicateTable);
-            saw_table = true;
-            in_modules = true;
+
+            const already_seen = switch (table.?) {
+                .modules => &saw_modules,
+                .history => &saw_history,
+            };
+            if (already_seen.*) return invalid(diagnostic, line_number, error.DuplicateTable);
+            already_seen.* = true;
             continue;
         }
 
-        if (!in_modules) return invalid(diagnostic, line_number, error.ExpectedModulesTable);
+        const active_table = table orelse
+            return invalid(diagnostic, line_number, error.ExpectedTable);
 
         const equals = std.mem.indexOfScalar(u8, line, '=') orelse
             return invalid(diagnostic, line_number, error.ExpectedAssignment);
@@ -116,32 +165,118 @@ fn parse(text: []const u8, diagnostic: *Diagnostic) ParseError!Modules {
         if (name.len == 0 or raw_value.len == 0)
             return invalid(diagnostic, line_number, error.ExpectedAssignment);
 
-        const enabled = if (std.mem.eql(u8, raw_value, "true"))
-            true
-        else if (std.mem.eql(u8, raw_value, "false"))
-            false
-        else
-            return invalid(diagnostic, line_number, error.ExpectedBoolean);
-
-        const module = std.meta.stringToEnum(Module, name) orelse
-            return invalid(diagnostic, line_number, error.UnknownModule);
-        const bit = @as(u8, 1) << @intFromEnum(module);
-        if (seen_modules & bit != 0)
-            return invalid(diagnostic, line_number, error.DuplicateModule);
-        seen_modules |= bit;
-
-        switch (module) {
-            .user_host => modules.user_host = enabled,
-            .directory => modules.directory = enabled,
-            .git => modules.git = enabled,
-            .language => modules.language = enabled,
-            .cmd_duration => modules.cmd_duration = enabled,
-            .character => modules.character = enabled,
-            .shell => modules.shell = enabled,
+        switch (active_table) {
+            .modules => try parseModule(
+                &settings.modules,
+                &seen_modules,
+                name,
+                raw_value,
+                diagnostic,
+                line_number,
+            ),
+            .history => try parseHistory(
+                &settings,
+                &seen_history,
+                name,
+                raw_value,
+                diagnostic,
+                line_number,
+            ),
         }
     }
 
-    return modules;
+    return settings;
+}
+
+fn parseModule(
+    modules: *Modules,
+    seen_modules: *u8,
+    name: []const u8,
+    raw_value: []const u8,
+    diagnostic: *Diagnostic,
+    line_number: usize,
+) ParseError!void {
+    const enabled = if (std.mem.eql(u8, raw_value, "true"))
+        true
+    else if (std.mem.eql(u8, raw_value, "false"))
+        false
+    else
+        return invalid(diagnostic, line_number, error.ExpectedBoolean);
+
+    const module = std.meta.stringToEnum(Module, name) orelse
+        return invalid(diagnostic, line_number, error.UnknownModule);
+    const bit = @as(u8, 1) << @intFromEnum(module);
+    if (seen_modules.* & bit != 0)
+        return invalid(diagnostic, line_number, error.DuplicateModule);
+    seen_modules.* |= bit;
+
+    switch (module) {
+        .user_host => modules.user_host = enabled,
+        .directory => modules.directory = enabled,
+        .git => modules.git = enabled,
+        .language => modules.language = enabled,
+        .cmd_duration => modules.cmd_duration = enabled,
+        .character => modules.character = enabled,
+        .shell => modules.shell = enabled,
+    }
+}
+
+const SeenHistory = struct {
+    key: bool = false,
+    scope_key: bool = false,
+};
+
+fn parseHistory(
+    settings: *Settings,
+    seen: *SeenHistory,
+    name: []const u8,
+    raw_value: []const u8,
+    diagnostic: *Diagnostic,
+    line_number: usize,
+) ParseError!void {
+    const value = stringValue(raw_value) orelse
+        return invalid(diagnostic, line_number, error.ExpectedString);
+
+    if (std.mem.eql(u8, name, "key")) {
+        if (seen.key) return invalid(diagnostic, line_number, error.DuplicateHistorySetting);
+        seen.key = true;
+        settings.history_key = if (std.mem.eql(u8, value, "up"))
+            .up
+        else if (std.mem.eql(u8, value, "ctrl-up"))
+            .ctrl_up
+        else if (std.mem.eql(u8, value, "alt-up"))
+            .alt_up
+        else
+            return invalid(diagnostic, line_number, error.UnknownHistoryKey);
+        return;
+    }
+
+    if (std.mem.eql(u8, name, "scope_key")) {
+        if (seen.scope_key) return invalid(diagnostic, line_number, error.DuplicateHistorySetting);
+        seen.scope_key = true;
+        settings.history_scope_key = parseScopeKey(value) orelse
+            return invalid(diagnostic, line_number, error.UnknownScopeKey);
+        return;
+    }
+
+    return invalid(diagnostic, line_number, error.UnknownHistorySetting);
+}
+
+/// Parses Ctrl plus a letter, excluding controls already assigned to editing,
+/// confirmation, or cancellation inside the picker.
+fn parseScopeKey(value: []const u8) ?ScopeKey {
+    if (value.len != 6 or !std.mem.eql(u8, value[0..5], "ctrl-")) return null;
+    const letter = value[5];
+    if (letter < 'a' or letter > 'z') return null;
+    if (std.mem.indexOfScalar(u8, "cdhijm", letter) != null) return null;
+    return .{ .code = letter - 'a' + 1 };
+}
+
+fn stringValue(raw: []const u8) ?[]const u8 {
+    if (raw.len < 2) return null;
+    const quote = raw[0];
+    if ((quote != '"' and quote != '\'') or raw[raw.len - 1] != quote) return null;
+    return raw[1 .. raw.len - 1];
 }
 
 fn invalid(diagnostic: *Diagnostic, line: usize, err: ParseError) ParseError {
@@ -160,28 +295,32 @@ test "path is under the user's config directory" {
     try std.testing.expect((try path(arena.allocator(), "")) == null);
 }
 
-test "missing settings preserve the status line without a shell suffix" {
+test "missing settings preserve the status line and Up binding" {
     var diagnostic: Diagnostic = .{};
     const got = try parse("# no overrides\n", &diagnostic);
-    try std.testing.expect(got.user_host);
-    try std.testing.expect(got.directory);
-    try std.testing.expect(got.git);
-    try std.testing.expect(got.language);
-    try std.testing.expect(got.cmd_duration);
-    try std.testing.expect(got.character);
-    try std.testing.expect(!got.shell);
+    try std.testing.expect(got.modules.user_host);
+    try std.testing.expect(got.modules.directory);
+    try std.testing.expect(got.modules.git);
+    try std.testing.expect(got.modules.language);
+    try std.testing.expect(got.modules.cmd_duration);
+    try std.testing.expect(got.modules.character);
+    try std.testing.expect(!got.modules.shell);
+    try std.testing.expectEqual(HistoryKey.up, got.history_key);
+    try std.testing.expectEqual(@as(u8, 0x07), got.history_scope_key.code);
 }
 
 test "an unset home loads defaults without looking for a file" {
     var diagnostic: Diagnostic = .{};
     const got = try load(std.testing.io, std.testing.allocator, "", &diagnostic);
-    try std.testing.expect(got.user_host);
-    try std.testing.expect(got.directory);
-    try std.testing.expect(got.git);
-    try std.testing.expect(got.language);
-    try std.testing.expect(got.cmd_duration);
-    try std.testing.expect(got.character);
-    try std.testing.expect(!got.shell);
+    try std.testing.expect(got.modules.user_host);
+    try std.testing.expect(got.modules.directory);
+    try std.testing.expect(got.modules.git);
+    try std.testing.expect(got.modules.language);
+    try std.testing.expect(got.modules.cmd_duration);
+    try std.testing.expect(got.modules.character);
+    try std.testing.expect(!got.modules.shell);
+    try std.testing.expectEqual(HistoryKey.up, got.history_key);
+    try std.testing.expectEqual(@as(u8, 0x07), got.history_scope_key.code);
 }
 
 test "modules can be disabled independently" {
@@ -197,18 +336,45 @@ test "modules can be disabled independently" {
         \\shell = true
     , &diagnostic);
 
-    try std.testing.expect(!got.user_host);
-    try std.testing.expect(got.directory);
-    try std.testing.expect(!got.git);
-    try std.testing.expect(!got.language);
-    try std.testing.expect(!got.cmd_duration);
-    try std.testing.expect(got.character);
-    try std.testing.expect(got.shell);
+    try std.testing.expect(!got.modules.user_host);
+    try std.testing.expect(got.modules.directory);
+    try std.testing.expect(!got.modules.git);
+    try std.testing.expect(!got.modules.language);
+    try std.testing.expect(!got.modules.cmd_duration);
+    try std.testing.expect(got.modules.character);
+    try std.testing.expect(got.modules.shell);
+}
+
+test "history keys accept launcher and scope bindings" {
+    var diagnostic: Diagnostic = .{};
+    const ctrl_up = try parse(
+        \\[history]
+        \\key = "ctrl-up"
+        \\scope_key = "ctrl-t"
+        \\[modules]
+        \\git = false
+    , &diagnostic);
+    try std.testing.expectEqual(HistoryKey.ctrl_up, ctrl_up.history_key);
+    try std.testing.expectEqual(@as(u8, 0x14), ctrl_up.history_scope_key.code);
+    try std.testing.expect(!ctrl_up.modules.git);
+
+    const up = try parse("[history]\nkey = 'up'\n", &diagnostic);
+    try std.testing.expectEqual(HistoryKey.up, up.history_key);
+
+    const alt_up = try parse("[history]\nkey = \"alt-up\"\n", &diagnostic);
+    try std.testing.expectEqual(HistoryKey.alt_up, alt_up.history_key);
 }
 
 test "invalid values and module names report their line" {
     var diagnostic: Diagnostic = .{};
     try std.testing.expectError(error.ExpectedBoolean, parse("[modules]\ngit = yes\n", &diagnostic));
+    try std.testing.expectEqual(@as(usize, 2), diagnostic.line);
+
+    diagnostic = .{};
+    try std.testing.expectError(
+        error.UnknownScopeKey,
+        parse("[history]\nscope_key = \"ctrl-c\"\n", &diagnostic),
+    );
     try std.testing.expectEqual(@as(usize, 2), diagnostic.line);
 
     diagnostic = .{};
@@ -221,6 +387,52 @@ test "duplicate module settings are rejected" {
     try std.testing.expectError(
         error.DuplicateModule,
         parse("[modules]\ngit = false\ngit = true\n", &diagnostic),
+    );
+    try std.testing.expectEqual(@as(usize, 3), diagnostic.line);
+}
+
+test "invalid history settings report their line" {
+    var diagnostic: Diagnostic = .{};
+    try std.testing.expectError(
+        error.ExpectedString,
+        parse("[history]\nkey = ctrl-up\n", &diagnostic),
+    );
+    try std.testing.expectEqual(@as(usize, 2), diagnostic.line);
+
+    diagnostic = .{};
+    try std.testing.expectError(
+        error.UnknownHistoryKey,
+        parse("[history]\nkey = \"cmd-up\"\n", &diagnostic),
+    );
+    try std.testing.expectEqual(@as(usize, 2), diagnostic.line);
+
+    diagnostic = .{};
+    try std.testing.expectError(
+        error.UnknownHistorySetting,
+        parse("[history]\nshortcut = \"ctrl-up\"\n", &diagnostic),
+    );
+    try std.testing.expectEqual(@as(usize, 2), diagnostic.line);
+}
+
+test "history key and tables cannot be repeated" {
+    var diagnostic: Diagnostic = .{};
+    try std.testing.expectError(
+        error.DuplicateHistorySetting,
+        parse("[history]\nkey = \"up\"\nkey = \"alt-up\"\n", &diagnostic),
+    );
+    try std.testing.expectEqual(@as(usize, 3), diagnostic.line);
+
+    diagnostic = .{};
+    try std.testing.expectError(
+        error.DuplicateHistorySetting,
+        parse("[history]\nscope_key = \"ctrl-g\"\nscope_key = \"ctrl-t\"\n", &diagnostic),
+    );
+    try std.testing.expectEqual(@as(usize, 3), diagnostic.line);
+
+    diagnostic = .{};
+    try std.testing.expectError(
+        error.DuplicateTable,
+        parse("[history]\nkey = \"up\"\n[history]\n", &diagnostic),
     );
     try std.testing.expectEqual(@as(usize, 3), diagnostic.line);
 }

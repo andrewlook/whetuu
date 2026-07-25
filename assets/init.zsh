@@ -42,8 +42,8 @@ __whetuu_precmd() {
 add-zsh-hook preexec __whetuu_preexec
 add-zsh-hook precmd __whetuu_precmd
 
-# Up arrow opens the whetuu history picker and runs the chosen command right
-# away, the same as the fish integration. Anything already typed seeds the
+# The configured key opens the whetuu history picker and runs the chosen command
+# right away, the same as the fish integration. Anything already typed seeds the
 # picker's search field, and the last failed command is passed with --last so it
 # appears marked at the top. Cancelling leaves the slot alone, so the failed
 # command is still offered next time. The picker draws on /dev/tty, so its stdout
@@ -62,8 +62,5 @@ __whetuu_history() {
 
 if [[ -o interactive ]]; then
     zle -N __whetuu_history
-    # Both the normal and the application cursor sequence, since which one the
-    # terminal sends depends on keypad mode.
-    bindkey '^[[A' __whetuu_history
-    bindkey '^[OA' __whetuu_history
+    # @whetuu-history-binding@
 fi

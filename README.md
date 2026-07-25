@@ -8,11 +8,12 @@ An opinionated, zero-config status line and history picker for fish, bash and
 zsh, written in Zig.
 
 Two things, not one. whetuu draws the status line above your cursor, and it puts
-your history on the up arrow.
+your history on the up arrow by default.
 
-Both live in one binary, so the picker knows where you are. The up arrow opens
-on what you ran in this directory, and Ctrl+G switches to all of it. Failed
-commands are never stored, so you do not scroll past your own typos.
+Both live in one binary, so the picker knows where you are. Its configured key
+opens on what you ran in this directory, and a second configured key switches
+to all of it.
+Failed commands are never stored, so you do not scroll past your own typos.
 
 Your own shell history stays exactly where it is. whetuu never reads or rewrites
 it, and keeps its own store alongside. See [History](#history) for what the
@@ -27,10 +28,10 @@ it falls on the second syllable. The ASCII name doubles the `u` to write that
 same long vowel.
 
 whetuu needs no configuration. One compiled binary renders the full curated
-status line by default. You can choose individual modules with one small TOML
-file. Every enabled module that reads the disk runs at the same time via
-`std.Io`, so a render costs about what its slowest probe costs. See
-[Configuration](#configuration) and [Performance](#performance).
+status line by default. You can choose individual modules and the picker keys
+with one small TOML file. Every enabled module that reads the disk runs at the
+same time via `std.Io`, so a render costs about what its slowest probe costs.
+See [Configuration](#configuration) and [Performance](#performance).
 
 > **Needs a [Nerd Font](https://www.nerdfonts.com/).** whetuu draws the git
 > branch, the language logos and the star with Nerd Font glyphs.
@@ -63,7 +64,7 @@ Left to right, each shown only when relevant:
 ## Configuration
 
 The existing status line modules are enabled when there is no config file. The
-shell suffix is opt in. Create `~/.config/whetuu/whetuu.toml` to choose modules:
+shell suffix is opt in. Create `~/.config/whetuu/whetuu.toml` to choose settings:
 
 ```toml
 [modules]
@@ -74,10 +75,14 @@ language = false
 cmd_duration = true
 character = true
 shell = true
+
+[history]
+key = "alt-up"
+scope_key = "ctrl-g"
 ```
 
-Every key is optional. Set it to `true` to enable the module and `false` to
-disable it. Disabling `git` or `language` also skips its file scan and
+Every module key is optional. Set it to `true` to enable the module and `false`
+to disable it. Disabling `git` or `language` also skips its file scan and
 subprocess. Disabling `language` leaves an enabled character purple because no
 project language is detected.
 
@@ -85,9 +90,20 @@ The `shell` module adds a modifier letter directly after the character: `ᶠ` fo
 fish, `ᶻ` for zsh and `ᵇ` for bash. It uses the character's purple, language or
 failure color. It only appears when `character` is also enabled.
 
-whetuu never creates or rewrites this file. A bad table, module name or value
-stops the render and reports the line to fix. Run `whetuu paths` to see the
-config path with the history and cache paths.
+The history `key` accepts `"up"`, `"ctrl-up"` and `"alt-up"`. Up is the default.
+Setting it to Ctrl+Up or Alt+Up leaves the plain up arrow to the shell, which
+makes multiline editing work normally. Press that modified key again to cancel
+the open picker. Open a new shell after changing it. Unix terminals do not have
+a portable Command key sequence. To use Command+Up, configure the terminal to
+send one of the supported modified Up sequences.
+
+The history `scope_key` switches between this directory and all history. It
+defaults to `"ctrl-g"` and accepts `"ctrl-"` plus any letter except C, D, H, I,
+J or M, whose control characters already edit, confirm or cancel the picker.
+
+whetuu never creates or rewrites this file. A bad table, setting or value stops
+the render or shell integration and reports the line to fix. Run `whetuu paths`
+to see the config path with the history and cache paths.
 
 ## Performance
 
@@ -155,10 +171,11 @@ whetuu reads your repository and prints a line. Here is what that involves.
   the config of a shell you do not use. A `PATH` line joins it only when
   `~/.local/bin` is not already on your `PATH`. Set `WHETUU_NO_MODIFY=1` and it
   prints them instead.
-- **The config only accepts module switches.** Its one `[modules]` table takes
-  seven boolean values. It cannot contain commands, paths or arguments. whetuu
-  reads it and never writes it. Running, whetuu writes two other files. One is
-  the history store. The other is a version cache at
+- **The config accepts only fixed settings.** Its `[modules]` table takes seven
+  boolean values. Its `[history]` table takes two named keys. It cannot contain
+  commands, paths, arguments or raw key sequences. whetuu reads it and never
+  writes it. Running, whetuu writes two other files. One is the history store.
+  The other is a version cache at
   `~/.cache/whetuu/versions`, or under `$XDG_CACHE_HOME` when that is set. The
   cache holds toolchain version strings and nothing else. Delete it whenever
   you like.
@@ -266,7 +283,7 @@ the program. The second removes the history store and the version cache, which
 live under the XDG directories rather than next to the binary. Run
 `whetuu paths` before you delete anything and it prints both locations, in case
 `$XDG_DATA_HOME` or `$XDG_CACHE_HOME` moves them on your machine.
-Delete `~/.config/whetuu` too if you do not want to keep your module settings.
+Delete `~/.config/whetuu` too if you do not want to keep your settings.
 
 ### From source
 
@@ -337,7 +354,7 @@ the script. `whetuu init fish | less` reads it.
 ## Usage
 
 Day to day there is nothing to run. The shell hook drives everything, and the
-history picker is on the up arrow. The full command surface:
+configured key opens the history picker. The full command surface:
 
 | Command | Does |
 |---|---|
@@ -375,10 +392,11 @@ truncates `~/.bash_history`, `~/.zsh_history` or fish's database. The two stores
 run side by side. Delete the whetuu store and your shell history is exactly as
 it was.
 
-Two things it does take. The up arrow, which all three integrations bind to the
-picker. And on bash only, `ignorespace` is added to your `HISTCONTROL`, keeping
-whatever value you already had, so a space prefixed command stays out of both
-stores. `Ctrl+R` and everything else your shell gives you keep working.
+Two things it does take by default. The up arrow opens the picker. On bash only,
+`ignorespace` is added to your `HISTCONTROL`, keeping whatever value you already
+had, so a space prefixed command stays out of both stores. Set the picker to
+Ctrl+Up or Alt+Up to leave the up arrow alone. `Ctrl+R` and every other shell
+binding keep working.
 
 A command is recorded once it finishes, and only when it exited with status 0.
 Typos and failed runs never enter the store. Prefix a command with a space to
@@ -390,23 +408,26 @@ appears at the top of the picker, in red. Pick it to fix and run it again.
 Cancel and it is still there the next time you open the picker. It lives in
 memory until you run another command, and never reaches the store.
 
-All three integrations bind the **up arrow** to the picker. Anything already
-typed on the command line carries over into the search field. The picker opens
-on the current directory's history, which is the set of commands you actually
-run in this project. It falls back to all history when the directory has none
-yet. A bar at the top names both scopes and highlights the active one, like
+All three integrations use the configured key, which is **Up** by default and
+can be **Ctrl+Up** or **Alt+Up** instead. Anything already typed on the command
+line carries over into the search field. The picker opens on the current
+directory's history, which is the set of commands you actually run in this
+project. It falls back to all history when the directory has none yet. A bar at
+the top names both scopes and highlights the active one, like
 `~/dev/whetuu | all`.
 
 - **type to filter** — every word must match, ignoring case
 - **↑ / ↓** — move the selection, where ↑ goes further back in time
-- **Ctrl+G** — switch between this directory's history and all history
+- **configured scope key** — switch between this directory's history and all
+  history. Ctrl+G is the default
 - **Tab** — copy the selected command into the search field, with a trailing
   space, so you can edit it or append flags before running. Enter then runs what
   you typed, not the entry it came from
 - **Enter** — run the selected command, or the text you typed after a Tab.
   Moving the selection with the arrows goes back to running the selection. With
   no Tab, a search that matches nothing runs as typed
-- **Esc / Ctrl-C** — cancel, leaving whatever you had typed on the command line
+- **Esc / Ctrl-C / configured modified Up** — cancel, leaving whatever you had
+  typed on the command line
 
 The picker behaves the same in all three shells.
 

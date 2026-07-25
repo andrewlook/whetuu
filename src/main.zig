@@ -39,7 +39,9 @@ pub fn main(init: std.process.Init) !void {
 
     if (std.mem.eql(u8, sub, "init")) {
         if (args.len < 3) return usage(io);
-        return init_scripts.write(io, args[2]);
+        const home = init.environ_map.get("HOME") orelse "";
+        const settings = loadSettings(io, arena, home);
+        return init_scripts.write(io, args[2], settings.history_key);
     }
 
     if (std.mem.eql(u8, sub, "render")) {
@@ -128,9 +130,7 @@ fn writePath(io: Io, w: *std.Io.Writer, label: []const u8, path: ?[]const u8) !v
 fn runRender(io: Io, arena: Allocator, environ: *std.process.Environ.Map, args: []const [:0]const u8) !void {
     const opts = try cli.parseRender(args);
     const home = environ.get("HOME") orelse "";
-    var diagnostic: config.Diagnostic = .{};
-    const modules = config.load(io, arena, home, &diagnostic) catch |err|
-        return configFailure(io, arena, home, diagnostic, err);
+    const settings = loadSettings(io, arena, home);
 
     var cwd_buf: [max_path_bytes]u8 = undefined;
     const cwd_len = std.process.currentPath(io, &cwd_buf) catch 0;
@@ -150,13 +150,19 @@ fn runRender(io: Io, arena: Allocator, environ: *std.process.Environ.Map, args: 
 
     var out_buf: [4096]u8 = undefined;
     var fw = Io.File.stdout().writer(io, &out_buf);
-    try render.render(io, arena, &env, modules, &fw.interface);
+    try render.render(io, arena, &env, settings.modules, &fw.interface);
     try fw.interface.flush();
 }
 
-/// Reports an unreadable or malformed module configuration and exits before
-/// rendering. Repeating the error is preferable to silently using switches the
-/// user did not ask for.
+fn loadSettings(io: Io, arena: Allocator, home: []const u8) config.Settings {
+    var diagnostic: config.Diagnostic = .{};
+    return config.load(io, arena, home, &diagnostic) catch |err|
+        configFailure(io, arena, home, diagnostic, err);
+}
+
+/// Reports unreadable or malformed configuration before rendering or emitting
+/// a shell integration. Repeating the error is preferable to silently using
+/// settings the user did not ask for.
 fn configFailure(io: Io, arena: Allocator, home: []const u8, diagnostic: config.Diagnostic, err: anyerror) noreturn {
     const config_path = config.path(arena, home) catch null;
     const display_path = if (config_path) |p| style.sanitize(arena, p) catch p else "~/.config/whetuu/whetuu.toml";
@@ -206,13 +212,20 @@ fn runHistory(io: Io, arena: Allocator, environ: *std.process.Environ.Map, args:
         return history.add(io, arena, path, try std.mem.join(arena, " ", parts), cwd, unixNow(io));
     }
 
+    const settings = loadSettings(io, arena, home);
     const opts = try cli.parseHistoryPick(args);
     const loaded = try history.load(io, arena, path);
     // The failure keeps the time it ran, so its age counts up across picker
     // opens instead of resetting to zero each time. A missing stamp means now.
     const failed_at = if (opts.last_at > 0) opts.last_at else unixNow(io);
     const items = try withLastFailure(arena, loaded, opts.last, cwd, failed_at);
-    const chosen = picker.pick(io, arena, items, .{ .initial = opts.query, .cwd = cwd, .home = home }) orelse return;
+    const chosen = picker.pick(io, arena, items, .{
+        .initial = opts.query,
+        .cwd = cwd,
+        .home = home,
+        .launcher_key = settings.history_key,
+        .scope_key = settings.history_scope_key.code,
+    }) orelse return;
 
     var buf: [4096]u8 = undefined;
     var fw = Io.File.stdout().writer(io, &buf);

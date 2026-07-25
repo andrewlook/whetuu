@@ -64,12 +64,12 @@ __whetuu_precmd() {
 }
 PROMPT_COMMAND=__whetuu_precmd
 
-# Up arrow opens the whetuu history picker and runs the chosen command right
-# away, the same as the fish and zsh integrations. Anything already typed seeds
-# the picker's search field, and the last failed command is passed with --last
-# so it appears marked at the top. Cancelling leaves the slot alone, so the
-# failed command is still offered next time. The picker draws on /dev/tty, so its
-# stdout is only the choice.
+# The configured key opens the whetuu history picker and runs the chosen command
+# right away, the same as the fish and zsh integrations. Anything already typed
+# seeds the picker's search field, and the last failed command is passed with
+# --last so it appears marked at the top. Cancelling leaves the slot alone, so
+# the failed command is still offered next time. The picker draws on /dev/tty,
+# so its stdout is only the choice.
 #
 # A `bind -x` function cannot run a command itself, so the key expands to a
 # two-step macro: the function first, then a follow-up key. The function decides
@@ -92,8 +92,5 @@ __whetuu_history() {
 if [[ $- == *i* ]]; then
     bind -x '"\C-x\C-w": __whetuu_history'
     bind '"\C-x\C-z": redraw-current-line'
-    # Both the normal and the application cursor sequence, since which one the
-    # terminal sends depends on keypad mode.
-    bind '"\e[A": "\C-x\C-w\C-x\C-z"'
-    bind '"\eOA": "\C-x\C-w\C-x\C-z"'
+    # @whetuu-history-binding@
 fi

@@ -5,8 +5,8 @@
 //! is bottom-anchored: the most recent command sits just above the search line,
 //! older commands climb upward. It opens scoped to the current directory's
 //! history (falling back to all history when the directory has none) and
-//! Ctrl+G toggles the scope; a bar at the top of the screen names both scopes
-//! with the active one highlighted (`~/dev/whetuu | all`). Rows are syntax
+//! a configurable control key toggles the scope; a bar at the top of the screen
+//! names both scopes with the active one highlighted (`~/dev/whetuu | all`). Rows are syntax
 //! highlighted by `highlight.zig`, which is where the palette lives. Pure
 //! list-filtering is split out for testing; the render/input loop is inherently
 //! terminal I/O and is exercised by hand.
@@ -17,6 +17,7 @@ const Io = std.Io;
 const posix = std.posix;
 
 const Entry = @import("history.zig").Entry;
+const HistoryKey = @import("config.zig").HistoryKey;
 const collapseHome = @import("module_directory.zig").collapseHome;
 const highlight = @import("highlight.zig");
 const style = @import("style.zig");
@@ -82,13 +83,18 @@ pub const Options = struct {
     cwd: []const u8 = "",
     /// `$HOME`, used only to shorten the scope label (`~/dev/whetuu`).
     home: []const u8 = "",
+    /// The shell binding that opened the picker. Modified Up bindings act as a
+    /// toggle and cancel the picker when pressed again.
+    launcher_key: HistoryKey = .up,
+    /// Control character that switches the directory and all-history scopes.
+    scope_key: u8 = 0x07,
 };
 
 /// Opens the picker over `items` (newest first), returning the chosen command
 /// or null when the user cancels, the list is empty, or no controlling terminal
 /// is available. The list opens scoped to `opts.cwd` when that directory has
-/// history (all history otherwise) and Ctrl+G toggles the scope. Tab copies
-/// the selected entry into the query (with a trailing space) so it can be
+/// history (all history otherwise) and the configured scope key toggles it.
+/// Tab copies the selected entry into the query (with a trailing space) so it can be
 /// edited, and Enter then returns that text. Otherwise Enter returns the
 /// selected entry, or the query when nothing matches it. See `confirm`, which
 /// decides between the two. Entry ages are re-read from the clock on every frame
@@ -126,7 +132,7 @@ pub fn pick(io: Io, arena: Allocator, items: []const Entry, opts: Options) ?[]co
     var scope = initialScope(items, opts.cwd);
     var selected: usize = 0;
     var base: usize = 0;
-    var input: Input = .{};
+    var input: Input = .{ .launcher_key = opts.launcher_key, .scope_key = opts.scope_key };
     var in_scope: []const Entry = &.{};
     var shown: []const Entry = &.{};
     var rescope = true;
@@ -213,7 +219,7 @@ pub fn pick(io: Io, arena: Allocator, items: []const Entry, opts: Options) ?[]co
 }
 
 /// The scope the picker opens in: the current directory when it has history,
-/// otherwise all — so the first up-arrow in a fresh directory never looks
+/// otherwise all — so the first picker open in a fresh directory never looks
 /// broken.
 fn initialScope(items: []const Entry, cwd: []const u8) Scope {
     if (cwd.len == 0) return .all;
@@ -265,7 +271,7 @@ fn matching(arena: Allocator, items: []const Entry, query: []const u8) ![]const 
 
 /// Builds the bar shown at the top of the screen — both scopes with the
 /// active one highlighted in the status line's purple, the inactive one and the
-/// separator dimmed: `~/dev/whetuu | all` (toggled with Ctrl+G). Null when
+/// separator dimmed: `~/dev/whetuu | all`. Null when
 /// `cwd` is empty, since there is then nothing to toggle.
 fn scopeBar(arena: Allocator, scope: Scope, cwd: []const u8, home: []const u8, max: usize) Allocator.Error!?ScopeBar {
     if (cwd.len == 0) return null;
@@ -360,6 +366,8 @@ fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
 /// in it) refreshes even while the user is idle.
 fn enterRaw(fd: posix.fd_t, original: posix.termios) !void {
     var raw = original;
+    raw.iflag.IXON = false;
+    raw.iflag.IXOFF = false;
     raw.lflag.ICANON = false;
     raw.lflag.ECHO = false;
     raw.lflag.ISIG = false;
@@ -379,26 +387,33 @@ const Decoded = struct {
 /// Decodes the first key in `bytes`. Assumes `bytes` is non-empty. Kept pure and
 /// separate from the read so a pasted run decodes exactly like the same bytes
 /// typed one at a time.
-fn decodeKey(bytes: []const u8) Decoded {
+fn decodeKey(bytes: []const u8, launcher_key: HistoryKey, scope_key: u8) Decoded {
     if (bytes[0] == 0x1b) {
         if (bytes.len >= 3 and bytes[1] == '[') {
+            var end: usize = 2;
+            while (end < bytes.len and (bytes[end] < 0x40 or bytes[end] > 0x7e)) : (end += 1) {}
+            if (end == bytes.len) return .{ .key = .cancel, .len = 1 };
+
+            const sequence = bytes[0 .. end + 1];
+            if (std.mem.eql(u8, sequence, "\x1b[A")) return .{ .key = .up, .len = sequence.len };
+            if (std.mem.eql(u8, sequence, "\x1b[B")) return .{ .key = .down, .len = sequence.len };
+            if (launcher_key == .ctrl_up and std.mem.eql(u8, sequence, "\x1b[1;5A"))
+                return .{ .key = .cancel, .len = sequence.len };
+            if (launcher_key == .alt_up and std.mem.eql(u8, sequence, "\x1b[1;3A"))
+                return .{ .key = .cancel, .len = sequence.len };
+
             return .{
-                .key = switch (bytes[2]) {
-                    'A' => .up,
-                    'B' => .down,
-                    else => .other,
-                },
-                .len = 3,
+                .key = .other,
+                .len = sequence.len,
             };
         }
 
         return .{ .key = .cancel, .len = 1 };
     }
 
-    const key: Key = switch (bytes[0]) {
+    const key: Key = if (bytes[0] == scope_key) .scope else switch (bytes[0]) {
         '\r', '\n' => .enter,
         '\t' => .tab,
-        0x07 => .scope, // Ctrl+G
         0x7f, 0x08 => .backspace,
         0x03, 0x04 => .cancel,
         else => if (bytes[0] >= 0x20 and bytes[0] < 0x7f) Key{ .char = bytes[0] } else .other,
@@ -411,6 +426,8 @@ fn decodeKey(bytes: []const u8) Decoded {
 /// only happens once it is drained — otherwise every byte after the first in a
 /// burst is silently dropped.
 const Input = struct {
+    launcher_key: HistoryKey = .up,
+    scope_key: u8 = 0x07,
     buf: [1024]u8 = undefined,
     len: usize = 0,
     pos: usize = 0,
@@ -431,7 +448,7 @@ const Input = struct {
     /// The next key already sitting in the buffer, or null once it is drained.
     fn buffered(in: *Input) ?Key {
         if (in.pos == in.len) return null;
-        const decoded = decodeKey(in.buf[in.pos..in.len]);
+        const decoded = decodeKey(in.buf[in.pos..in.len], in.launcher_key, in.scope_key);
         in.pos += decoded.len;
         return decoded.key;
     }
@@ -468,7 +485,7 @@ test "every character of a pasted run is decoded" {
     const pasted = "--version";
     var i: usize = 0;
     while (i < pasted.len) {
-        const decoded = decodeKey(pasted[i..]);
+        const decoded = decodeKey(pasted[i..], .up, 0x07);
         switch (decoded.key) {
             .char => |c| try typed.append(std.testing.allocator, c),
             else => return error.UnexpectedKey,
@@ -480,17 +497,39 @@ test "every character of a pasted run is decoded" {
 }
 
 test "an arrow escape consumes the whole sequence" {
-    const up = decodeKey("\x1b[A");
+    const up = decodeKey("\x1b[A", .up, 0x07);
     try std.testing.expect(std.meta.activeTag(up.key) == .up);
     try std.testing.expectEqual(@as(usize, 3), up.len);
 
-    const down = decodeKey("\x1b[B");
+    const down = decodeKey("\x1b[B", .up, 0x07);
     try std.testing.expect(std.meta.activeTag(down.key) == .down);
     try std.testing.expectEqual(@as(usize, 3), down.len);
 
-    const escape = decodeKey("\x1b");
+    const escape = decodeKey("\x1b", .up, 0x07);
     try std.testing.expect(std.meta.activeTag(escape.key) == .cancel);
     try std.testing.expectEqual(@as(usize, 1), escape.len);
+}
+
+test "the configured modified Up launcher cancels the picker" {
+    const ctrl_up = decodeKey("\x1b[1;5A", .ctrl_up, 0x07);
+    try std.testing.expect(std.meta.activeTag(ctrl_up.key) == .cancel);
+    try std.testing.expectEqual(@as(usize, 6), ctrl_up.len);
+
+    const alt_up = decodeKey("\x1b[1;3A", .alt_up, 0x07);
+    try std.testing.expect(std.meta.activeTag(alt_up.key) == .cancel);
+    try std.testing.expectEqual(@as(usize, 6), alt_up.len);
+
+    const unbound = decodeKey("\x1b[1;5A", .alt_up, 0x07);
+    try std.testing.expect(std.meta.activeTag(unbound.key) == .other);
+    try std.testing.expectEqual(@as(usize, 6), unbound.len);
+}
+
+test "the configured control key switches history scope" {
+    const ctrl_t = decodeKey("\x14", .alt_up, 0x14);
+    try std.testing.expect(std.meta.activeTag(ctrl_t.key) == .scope);
+
+    const old_default = decodeKey("\x07", .alt_up, 0x14);
+    try std.testing.expect(std.meta.activeTag(old_default.key) == .other);
 }
 
 test "a burst mixing text and control keys decodes in order" {
@@ -500,7 +539,7 @@ test "a burst mixing text and control keys decodes in order" {
 
     var i: usize = 0;
     while (i < bytes.len) {
-        const decoded = decodeKey(bytes[i..]);
+        const decoded = decodeKey(bytes[i..], .up, 0x07);
         try keys.append(std.testing.allocator, decoded.key);
         i += decoded.len;
     }
