@@ -273,7 +273,9 @@ cd whetuu
 tools/install.sh
 ```
 
-The script builds a ReleaseFast binary and installs it to `~/.local/bin`.
+The script uses the exact Zig version on `PATH`, or an installed copy from
+`mise`, then builds a ReleaseFast binary and installs it to `~/.local/bin`.
+It stops with the exact `mise install` command when that compiler is missing.
 Choose another directory the same way as the release installer:
 
 ```sh

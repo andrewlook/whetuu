@@ -35,10 +35,38 @@ need git
 need install
 need mktemp
 need mv
-need zig
+need sed
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
 cd "$root"
+
+required_zig=$(sed -n 's/^[[:space:]]*\.minimum_zig_version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' build.zig.zon)
+[[ -n $required_zig ]] || die "could not read minimum_zig_version from build.zig.zon"
+
+# Zig's build API changes between releases, so a nearby stable compiler can
+# fail before it reaches whetuu's source. Prefer the exact compiler on PATH,
+# then an installed mise copy even when mise has not activated it in this shell.
+zig_bin=
+found_zig=
+if command -v zig >/dev/null 2>&1; then
+    candidate=$(command -v zig)
+    found_zig=$("$candidate" version 2>/dev/null || true)
+    if [[ $found_zig == "$required_zig" ]]; then
+        zig_bin=$candidate
+    fi
+fi
+
+if [[ -z $zig_bin ]] && command -v mise >/dev/null 2>&1; then
+    mise_dir=$(mise where "zig@$required_zig" 2>/dev/null || true)
+    if [[ -x $mise_dir/zig ]] && [[ $("$mise_dir/zig" version 2>/dev/null || true) == "$required_zig" ]]; then
+        zig_bin=$mise_dir/zig
+    fi
+fi
+
+if [[ -z $zig_bin ]]; then
+    found=${found_zig:-none}
+    die "Zig $required_zig is required, found $found. Put it on PATH or run: mise install zig@$required_zig"
+fi
 
 if [[ -n ${WHETUU_INSTALL_DIR:-} ]]; then
     install_dir=$WHETUU_INSTALL_DIR
@@ -48,8 +76,8 @@ else
     die "HOME is unset. Set WHETUU_INSTALL_DIR to choose an install directory."
 fi
 
-say "building release binary"
-zig build --release=fast
+say "building release binary with Zig $required_zig"
+"$zig_bin" build --release=fast
 
 binary=zig-out/bin/whetuu
 [[ -f $binary ]] || die "$binary was not produced"
