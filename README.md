@@ -90,16 +90,19 @@ The `shell` module adds a modifier letter directly after the character: `ᶠ` fo
 fish, `ᶻ` for zsh and `ᵇ` for bash. It uses the character's purple, language or
 failure color. It only appears when `character` is also enabled.
 
-The history `key` accepts `"up"`, `"ctrl-up"` and `"alt-up"`. Up is the default.
-Setting it to Ctrl+Up or Alt+Up leaves the plain up arrow to the shell, which
-makes multiline editing work normally. Press that modified key again to cancel
-the open picker. Open a new shell after changing it. Unix terminals do not have
-a portable Command key sequence. To use Command+Up, configure the terminal to
-send one of the supported modified Up sequences.
+The history `key` accepts `"up"`, `"ctrl-up"`, `"alt-up"`, or `"ctrl-"` plus any
+letter except C, D, H, I, J or M, whose control characters already edit,
+confirm or cancel the picker. Up is the default. Setting it to Ctrl+Up or
+Alt+Up leaves the plain up arrow to the shell, which makes multiline editing
+work normally; a Ctrl+letter binding leaves it alone too. Press the configured
+key again to cancel the open picker. Open a new shell after changing it. Unix
+terminals do not have a portable Command key sequence. To use Command+Up,
+configure the terminal to send one of the supported modified Up sequences.
 
 The history `scope_key` switches between this directory and all history. It
 defaults to `"ctrl-g"` and accepts `"ctrl-"` plus any letter except C, D, H, I,
 J or M, whose control characters already edit, confirm or cancel the picker.
+`key` and `scope_key` must use different letters.
 
 whetuu never creates or rewrites this file. A bad table, setting or value stops
 the render or shell integration and reports the line to fix. Run `whetuu paths`

@@ -397,9 +397,9 @@ fn decodeKey(bytes: []const u8, launcher_key: HistoryKey, scope_key: u8) Decoded
             const sequence = bytes[0 .. end + 1];
             if (std.mem.eql(u8, sequence, "\x1b[A")) return .{ .key = .up, .len = sequence.len };
             if (std.mem.eql(u8, sequence, "\x1b[B")) return .{ .key = .down, .len = sequence.len };
-            if (launcher_key == .ctrl_up and std.mem.eql(u8, sequence, "\x1b[1;5A"))
+            if (std.meta.activeTag(launcher_key) == .ctrl_up and std.mem.eql(u8, sequence, "\x1b[1;5A"))
                 return .{ .key = .cancel, .len = sequence.len };
-            if (launcher_key == .alt_up and std.mem.eql(u8, sequence, "\x1b[1;3A"))
+            if (std.meta.activeTag(launcher_key) == .alt_up and std.mem.eql(u8, sequence, "\x1b[1;3A"))
                 return .{ .key = .cancel, .len = sequence.len };
 
             return .{
@@ -411,7 +411,16 @@ fn decodeKey(bytes: []const u8, launcher_key: HistoryKey, scope_key: u8) Decoded
         return .{ .key = .cancel, .len = 1 };
     }
 
-    const key: Key = if (bytes[0] == scope_key) .scope else switch (bytes[0]) {
+    // A Ctrl+letter launcher (unlike the arrow variants above) is a plain
+    // control byte, decoded alongside scope_key below. Pressing it again
+    // while the picker is open cancels, the same toggle the arrow variants
+    // get. config.zig's shared letter pool guarantees this byte never
+    // collides with '\r', '\t', backspace or the fixed cancel bytes.
+    const key: Key = if (bytes[0] == scope_key)
+        .scope
+    else if (std.meta.activeTag(launcher_key) == .ctrl_letter and bytes[0] == launcher_key.ctrl_letter)
+        .cancel
+    else switch (bytes[0]) {
         '\r', '\n' => .enter,
         '\t' => .tab,
         0x7f, 0x08 => .backspace,
@@ -530,6 +539,17 @@ test "the configured control key switches history scope" {
 
     const old_default = decodeKey("\x07", .alt_up, 0x14);
     try std.testing.expect(std.meta.activeTag(old_default.key) == .other);
+}
+
+test "a ctrl-letter launcher cancels the picker like the arrow variants" {
+    const ctrl_r: HistoryKey = .{ .ctrl_letter = 'r' - 'a' + 1 };
+
+    const pressed_again = decodeKey("\x12", ctrl_r, 0x07);
+    try std.testing.expect(std.meta.activeTag(pressed_again.key) == .cancel);
+    try std.testing.expectEqual(@as(usize, 1), pressed_again.len);
+
+    const other_letter = decodeKey("\x12", .up, 0x07);
+    try std.testing.expect(std.meta.activeTag(other_letter.key) == .other);
 }
 
 test "a burst mixing text and control keys decodes in order" {

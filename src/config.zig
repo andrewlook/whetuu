@@ -1,7 +1,7 @@
 //! Optional configuration read from `~/.config/whetuu/whetuu.toml`. A missing
 //! file preserves the original status line and Up binding. The accepted TOML
-//! schema is deliberately small: boolean module switches and two named history
-//! keys.
+//! schema is deliberately small: boolean module switches, a history launcher
+//! key (named or an arbitrary Ctrl+letter), and a history scope key.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -12,12 +12,16 @@ const Io = std.Io;
 /// tiny, and a bound keeps an accidental large file off the render path.
 const read_limit: Io.Limit = .limited(64 * 1024);
 
-/// Named picker bindings. Arbitrary escape sequences are deliberately absent
-/// so configuration text never becomes generated shell code.
-pub const HistoryKey = enum {
+/// The picker launcher binding. `ctrl_letter` accepts any Ctrl+letter other
+/// than the ones the picker's own key handling already claims (see
+/// `parseCtrlLetter`). Arbitrary escape sequences are deliberately absent so
+/// configuration text never becomes generated shell code — every variant here
+/// maps to a fixed, known-safe binding per shell.
+pub const HistoryKey = union(enum) {
     up,
     ctrl_up,
     alt_up,
+    ctrl_letter: u8,
 };
 
 /// The control character that switches the picker's directory and all-history
@@ -81,6 +85,7 @@ pub const ParseError = error{
     DuplicateHistorySetting,
     UnknownHistoryKey,
     UnknownScopeKey,
+    HistoryKeyMatchesScopeKey,
 };
 
 /// Loads all settings. A missing file or an unset HOME uses defaults;
@@ -114,8 +119,9 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.DuplicateModule => "module is configured more than once",
         error.UnknownHistorySetting => "unknown history setting",
         error.DuplicateHistorySetting => "history setting is configured more than once",
-        error.UnknownHistoryKey => "history key must be \"up\", \"ctrl-up\" or \"alt-up\"",
+        error.UnknownHistoryKey => "history key must be \"up\", \"ctrl-up\", \"alt-up\", or \"ctrl-\" plus an unused letter",
         error.UnknownScopeKey => "history scope key must be Ctrl plus an unused letter",
+        error.HistoryKeyMatchesScopeKey => "history key and scope key cannot use the same letter",
         else => "configuration could not be read",
     };
 }
@@ -185,6 +191,16 @@ fn parse(text: []const u8, diagnostic: *Diagnostic) ParseError!Settings {
         }
     }
 
+    if (std.meta.activeTag(settings.history_key) == .ctrl_letter and
+        settings.history_key.ctrl_letter == settings.history_scope_key.code)
+    {
+        return invalid(
+            diagnostic,
+            @max(seen_history.key_line, seen_history.scope_key_line),
+            error.HistoryKeyMatchesScopeKey,
+        );
+    }
+
     return settings;
 }
 
@@ -224,6 +240,8 @@ fn parseModule(
 const SeenHistory = struct {
     key: bool = false,
     scope_key: bool = false,
+    key_line: usize = 0,
+    scope_key_line: usize = 0,
 };
 
 fn parseHistory(
@@ -240,12 +258,15 @@ fn parseHistory(
     if (std.mem.eql(u8, name, "key")) {
         if (seen.key) return invalid(diagnostic, line_number, error.DuplicateHistorySetting);
         seen.key = true;
+        seen.key_line = line_number;
         settings.history_key = if (std.mem.eql(u8, value, "up"))
             .up
         else if (std.mem.eql(u8, value, "ctrl-up"))
             .ctrl_up
         else if (std.mem.eql(u8, value, "alt-up"))
             .alt_up
+        else if (parseCtrlLetter(value)) |code|
+            .{ .ctrl_letter = code }
         else
             return invalid(diagnostic, line_number, error.UnknownHistoryKey);
         return;
@@ -254,8 +275,10 @@ fn parseHistory(
     if (std.mem.eql(u8, name, "scope_key")) {
         if (seen.scope_key) return invalid(diagnostic, line_number, error.DuplicateHistorySetting);
         seen.scope_key = true;
-        settings.history_scope_key = parseScopeKey(value) orelse
+        seen.scope_key_line = line_number;
+        const code = parseCtrlLetter(value) orelse
             return invalid(diagnostic, line_number, error.UnknownScopeKey);
+        settings.history_scope_key = .{ .code = code };
         return;
     }
 
@@ -263,13 +286,14 @@ fn parseHistory(
 }
 
 /// Parses Ctrl plus a letter, excluding controls already assigned to editing,
-/// confirmation, or cancellation inside the picker.
-fn parseScopeKey(value: []const u8) ?ScopeKey {
+/// confirmation, or cancellation inside the picker. Shared by the history
+/// launcher key and the scope key, which draw from the same letter pool.
+fn parseCtrlLetter(value: []const u8) ?u8 {
     if (value.len != 6 or !std.mem.eql(u8, value[0..5], "ctrl-")) return null;
     const letter = value[5];
     if (letter < 'a' or letter > 'z') return null;
     if (std.mem.indexOfScalar(u8, "cdhijm", letter) != null) return null;
-    return .{ .code = letter - 'a' + 1 };
+    return letter - 'a' + 1;
 }
 
 fn stringValue(raw: []const u8) ?[]const u8 {
@@ -363,6 +387,39 @@ test "history keys accept launcher and scope bindings" {
 
     const alt_up = try parse("[history]\nkey = \"alt-up\"\n", &diagnostic);
     try std.testing.expectEqual(HistoryKey.alt_up, alt_up.history_key);
+}
+
+test "history key accepts an arbitrary unreserved ctrl-letter" {
+    var diagnostic: Diagnostic = .{};
+    const got = try parse("[history]\nkey = \"ctrl-r\"\n", &diagnostic);
+    try std.testing.expectEqual(HistoryKey{ .ctrl_letter = 0x12 }, got.history_key);
+}
+
+test "history key rejects letters reserved by the picker's own key handling" {
+    var diagnostic: Diagnostic = .{};
+    for ("cdhijm") |letter| {
+        diagnostic = .{};
+        var buf: [32]u8 = undefined;
+        const text = std.fmt.bufPrint(&buf, "[history]\nkey = \"ctrl-{c}\"\n", .{letter}) catch unreachable;
+        try std.testing.expectError(error.UnknownHistoryKey, parse(text, &diagnostic));
+        try std.testing.expectEqual(@as(usize, 2), diagnostic.line);
+    }
+}
+
+test "history key and scope key cannot share a letter" {
+    var diagnostic: Diagnostic = .{};
+    try std.testing.expectError(
+        error.HistoryKeyMatchesScopeKey,
+        parse("[history]\nkey = \"ctrl-r\"\nscope_key = \"ctrl-r\"\n", &diagnostic),
+    );
+    try std.testing.expectEqual(@as(usize, 3), diagnostic.line);
+
+    // The default scope key (Ctrl-G) collides just as much as an explicit one.
+    diagnostic = .{};
+    try std.testing.expectError(
+        error.HistoryKeyMatchesScopeKey,
+        parse("[history]\nkey = \"ctrl-g\"\n", &diagnostic),
+    );
 }
 
 test "invalid values and module names report their line" {

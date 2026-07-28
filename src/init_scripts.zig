@@ -38,37 +38,62 @@ fn embeddedScript(shell: Shell) []const u8 {
     };
 }
 
-/// Safe shell source for the two named bindings. No configuration bytes are
-/// interpolated here.
-fn historyBinding(shell: Shell, key: HistoryKey) []const u8 {
-    return switch (shell) {
+/// Safe shell source for the launcher binding. The `ctrl_letter` case
+/// interpolates a single validated letter (`config.zig` allows only a-z,
+/// excluding the ones the picker's own key handling already claims) — never
+/// a raw escape sequence from configuration, so generated shell code stays
+/// predictable.
+fn writeHistoryBinding(w: *Writer, shell: Shell, key: HistoryKey) Writer.Error!void {
+    switch (shell) {
         .fish => switch (key) {
-            .up => "    bind up __whetuu_history\n",
-            .ctrl_up => "    bind ctrl-up __whetuu_history\n",
-            .alt_up => "    bind alt-up __whetuu_history\n",
+            .up => try w.writeAll("    bind up __whetuu_history\n"),
+            .ctrl_up => try w.writeAll("    bind ctrl-up __whetuu_history\n"),
+            .alt_up => try w.writeAll("    bind alt-up __whetuu_history\n"),
+            .ctrl_letter => |code| try w.print(
+                "    bind ctrl-{c} __whetuu_history\n",
+                .{letterOf(code)},
+            ),
         },
         .bash => switch (key) {
-            .up => "    # Both cursor sequences are common, depending on keypad mode.\n" ++
-                "    bind '\"\\e[A\": \"\\C-x\\C-w\\C-x\\C-z\"'\n" ++
-                "    bind '\"\\eOA\": \"\\C-x\\C-w\\C-x\\C-z\"'\n",
-            .ctrl_up => "    bind '\"\\e[1;5A\": \"\\C-x\\C-w\\C-x\\C-z\"'\n",
-            .alt_up => "    bind '\"\\e[1;3A\": \"\\C-x\\C-w\\C-x\\C-z\"'\n",
+            .up => try w.writeAll(
+                "    # Both cursor sequences are common, depending on keypad mode.\n" ++
+                    "    bind '\"\\e[A\": \"\\C-x\\C-w\\C-x\\C-z\"'\n" ++
+                    "    bind '\"\\eOA\": \"\\C-x\\C-w\\C-x\\C-z\"'\n",
+            ),
+            .ctrl_up => try w.writeAll("    bind '\"\\e[1;5A\": \"\\C-x\\C-w\\C-x\\C-z\"'\n"),
+            .alt_up => try w.writeAll("    bind '\"\\e[1;3A\": \"\\C-x\\C-w\\C-x\\C-z\"'\n"),
+            .ctrl_letter => |code| try w.print(
+                "    bind '\"\\C-{c}\": \"\\C-x\\C-w\\C-x\\C-z\"'\n",
+                .{letterOf(code)},
+            ),
         },
         .zsh => switch (key) {
-            .up => "    # Both cursor sequences are common, depending on keypad mode.\n" ++
-                "    bindkey '^[[A' __whetuu_history\n" ++
-                "    bindkey '^[OA' __whetuu_history\n",
-            .ctrl_up => "    bindkey '^[[1;5A' __whetuu_history\n",
-            .alt_up => "    bindkey '^[[1;3A' __whetuu_history\n",
+            .up => try w.writeAll(
+                "    # Both cursor sequences are common, depending on keypad mode.\n" ++
+                    "    bindkey '^[[A' __whetuu_history\n" ++
+                    "    bindkey '^[OA' __whetuu_history\n",
+            ),
+            .ctrl_up => try w.writeAll("    bindkey '^[[1;5A' __whetuu_history\n"),
+            .alt_up => try w.writeAll("    bindkey '^[[1;3A' __whetuu_history\n"),
+            .ctrl_letter => |code| try w.print(
+                "    bindkey '^{c}' __whetuu_history\n",
+                .{letterOf(code)},
+            ),
         },
-    };
+    }
+}
+
+/// The lowercase letter behind a Ctrl+letter code, as `config.zig` encodes it
+/// (`ctrl-a` through `ctrl-z`, so 1 through 26).
+fn letterOf(code: u8) u8 {
+    return 'a' + code - 1;
 }
 
 fn writeScript(w: *Writer, shell: Shell, key: HistoryKey) Writer.Error!void {
     const source = embeddedScript(shell);
     const marker_at = std.mem.indexOf(u8, source, history_binding_marker) orelse unreachable;
     try w.writeAll(source[0..marker_at]);
-    try w.writeAll(historyBinding(shell, key));
+    try writeHistoryBinding(w, shell, key);
     try w.writeAll(source[marker_at + history_binding_marker.len ..]);
 }
 
@@ -205,5 +230,22 @@ test "history binding selects Up, Ctrl-Up or Alt-Up for every shell" {
         try std.testing.expect(std.mem.indexOf(u8, alt_up, case.up) == null);
         try std.testing.expect(std.mem.indexOf(u8, alt_up, case.ctrl_up) == null);
         try std.testing.expect(std.mem.indexOf(u8, alt_up, history_binding_marker) == null);
+    }
+}
+
+test "history binding accepts an arbitrary unreserved ctrl-letter for every shell" {
+    const cases = [_]struct { shell: Shell, expect: []const u8 }{
+        .{ .shell = .fish, .expect = "bind ctrl-r __whetuu_history" },
+        .{ .shell = .bash, .expect = "\\C-r" },
+        .{ .shell = .zsh, .expect = "bindkey '^r' __whetuu_history" },
+    };
+
+    var buf: [8192]u8 = undefined;
+    for (cases) |case| {
+        var w: Writer = .fixed(&buf);
+        try writeScript(&w, case.shell, .{ .ctrl_letter = 'r' - 'a' + 1 });
+        const out = w.buffered();
+        try std.testing.expect(std.mem.indexOf(u8, out, case.expect) != null);
+        try std.testing.expect(std.mem.indexOf(u8, out, history_binding_marker) == null);
     }
 }

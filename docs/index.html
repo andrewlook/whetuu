@@ -554,8 +554,8 @@ shell = true
 [history]
 key = "alt-up"
 scope_key = "ctrl-g"</pre>
-  <p class="note"><b>The history key accepts <code>up</code>, <code>ctrl-up</code> and <code>alt-up</code>.</b> Ctrl+Up and Alt+Up leave plain Up to the shell for multiline editing. Press that modified key again to cancel the open picker. Open a new shell after changing it. Command+Up has no portable terminal sequence, but your terminal can map it to one of the supported modified Up sequences.</p>
-  <p class="note"><b>The scope key defaults to <code>ctrl-g</code>.</b> It accepts <code>ctrl-</code> plus any letter except C, D, H, I, J or M, whose control characters already edit, confirm or cancel the picker.</p>
+  <p class="note"><b>The history key accepts <code>up</code>, <code>ctrl-up</code>, <code>alt-up</code>, or <code>ctrl-</code> plus any letter except C, D, H, I, J or M, whose control characters already edit, confirm or cancel the picker.</b> Ctrl+Up, Alt+Up and Ctrl+letter all leave plain Up to the shell for multiline editing. Press the configured key again to cancel the open picker. Open a new shell after changing it. Command+Up has no portable terminal sequence, but your terminal can map it to one of the supported modified Up sequences.</p>
+  <p class="note"><b>The scope key defaults to <code>ctrl-g</code>.</b> It accepts <code>ctrl-</code> plus any letter except C, D, H, I, J or M, whose control characters already edit, confirm or cancel the picker. It must use a different letter than the history key.</p>
   <p class="note">whetuu never creates or rewrites this file. Disabling <b>git</b> or <b>language</b> also skips its file scan and subprocess. A bad setting stops the render or shell integration and reports the line to fix.</p>
 </section>
 <section class="wrap" id="picker">
